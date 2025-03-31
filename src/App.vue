@@ -1,34 +1,24 @@
 <template>
-  <div class="app">
-    <AppSidebar v-model="activeSection" />
-    <div class="content">
-      <h2>База РЦДО</h2>
-      
-      <!-- Динамическое отображение компонентов в зависимости от выбранного пункта меню -->
-      <TableStudent v-if="activeSection === 'students'" />
-      <TableTeachers v-if="activeSection === 'teachers'" />
-      <TableStudentContracts v-if="activeSection === 'student-contracts'" />
-      <TableTeacherContracts v-if="activeSection === 'teacher-contracts'" />
-    </div>
+   <div>
+    <h2>Список учеников</h2>
+    <DataTable
+      :tableData="users"
+      :tableColumns="columns"
+      initialSortKey="id"
+      initialSortOrder="asc"
+      @sort-changed="onSortChanged"
+    />
   </div> 
 </template>
 
 <script>
 import { ref } from 'vue';
-import AppSidebar from './components/AppSidebar.vue';
-import TableStudent from './components/TableStudent.vue';
-import TableTeachers from './components/TableTeachers.vue';
-import TableStudentContracts from './components/TableStudentContracts.vue';
-import TableTeacherContracts from './components/TableTeacherContracts.vue';
+import DataTable from '@/components/DataTable.vue';
 
 export default {
   name: 'App',
   components: {
-    AppSidebar ,
-    TableStudent,
-    TableTeachers,
-    TableStudentContracts,
-    TableTeacherContracts
+    DataTable
   },
   setup() {
     const activeSection = ref('students');
