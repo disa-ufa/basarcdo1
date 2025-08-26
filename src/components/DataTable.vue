@@ -1,6 +1,5 @@
 <template>
-<div class="data-table-component">
-    <!-- Поле поиска -->
+  <div class="data-table-component">
     <div class="search-container">
       <input
         type="text"
@@ -11,7 +10,6 @@
       />
     </div>
 
-    <!-- Таблица -->
     <div class="table-container">
       <table class="data-table">
         <thead>
@@ -19,11 +17,12 @@
             <th
               v-for="col in columns"
               :key="col.key"
-              @click="sortBy(col.key)"
-              :class="{ active: sortKey === col.key }"
+              @click="col.key !== 'actions' ? sortBy(col.key) : null"
+              :class="{ active: sortKey === col.key, 'non-sortable': col.key === 'actions' }"
+              :style="{ cursor: col.key === 'actions' ? 'default' : 'pointer' }"
             >
               {{ col.label }}
-              <span class="sort-indicator" v-if="sortKey === col.key">
+              <span class="sort-indicator" v-if="sortKey === col.key && col.key !== 'actions'">
                 {{ sortOrder === 'asc' ? '▲' : '▼' }}
               </span>
             </th>
@@ -31,13 +30,38 @@
         </thead>
         <tbody>
           <tr v-if="filteredData.length === 0">
-            <td :colspan="columns.length" class="no-results">
-              Ничего не найдено
-            </td>
+            <td :colspan="columns.length" class="no-results">Ничего не найдено</td>
           </tr>
-          <tr v-for="(row, index) in filteredData" :key="index">
+          <tr
+            v-for="(row, index) in filteredData"
+            :key="index"
+            :class="getRowClass(row)"
+            @click="$event.target.closest('button') ? null : $emit('row-click', row)"
+            style="cursor: pointer;"
+          >
             <td v-for="col in columns" :key="col.key">
-              {{ row[col.key] }}
+              <template v-if="col.key === 'actions'">
+                <div v-if="showActionButton(row)">
+                  <button
+                    @click.stop="() => handleActionClick(row, 'default')"
+                    class="action-button"
+                    :disabled="row.adding"
+                  >
+                    {{ row.adding ? 'Добавление...' : 'Добавить' }}
+                  </button>
+                  <button
+                    @click.stop="() => handleActionClick(row, 'hoz')"
+                    class="action-button"
+                    :disabled="row.adding"
+                    style="margin-left: 6px; background-color: #28a745"
+                  >
+                    {{ row.adding ? 'Добавление...' : 'Добавить Хоз' }}
+                  </button>
+                </div>
+              </template>
+              <template v-else>
+                {{ row[col.key] }}
+              </template>
             </td>
           </tr>
         </tbody>
@@ -47,237 +71,155 @@
 </template>
 
 <script>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 
 export default {
   name: 'DataTable',
-  
   props: {
-    /**
-     * Массив данных для отображения в таблице
-     * Пример: [{ id: 1, name: 'Иван', age: 30 }, ...]
-     */
-    tableData: {
-      type: Array,
-      required: true
-    },
-    
-    /**
-     * Конфигурация колонок таблицы
-     * Пример: [{ key: 'id', label: 'ID' }, { key: 'name', label: 'Имя' }, ...]
-     */
-    tableColumns: {
-      type: Array,
-      required: true
-    },
-    
-    /**
-     * Начальная колонка для сортировки
-     */
-    initialSortKey: {
-      type: String,
-      default: ''
-    },
-    
-    /**
-     * Начальный порядок сортировки ('asc' или 'desc')
-     */
+    tableData: { type: Array, required: true },
+    tableColumns: { type: Array, required: true },
+    initialSortKey: { type: String, default: '' },
     initialSortOrder: {
       type: String,
       default: 'asc',
-      validator: (value) => ['asc', 'desc'].includes(value)
-    }
+      validator: value => ['asc', 'desc'].includes(value)
+    },
+    actionButtonText: { type: Function, default: () => 'Открыть' },
+    showActionButton: { type: Function, default: () => true }
   },
-  
-  emits: ['sort-changed'],
-  
+  emits: ['sort-changed', 'action-triggered', 'row-click'],
   setup(props, { emit }) {
-    // Данные и колонки
-    const data = ref(props.tableData);
-    const columns = ref(props.tableColumns);
-    
-    // Состояние сортировки и поиска
+    const data = ref([...props.tableData]);
+    const columns = ref([...props.tableColumns]);
+
     const searchQuery = ref('');
     const sortKey = ref(props.initialSortKey);
     const sortOrder = ref(props.initialSortOrder);
-    
-    // Фильтрация и сортировка данных
+
     const filteredData = computed(() => {
       let result = [...data.value];
-      
-      // Фильтрация по поисковому запросу
+
       if (searchQuery.value) {
         const search = searchQuery.value.toLowerCase();
-        result = result.filter(row => {
-          return Object.values(row).some(value => {
-            if (value === null || value === undefined) return false;
-            return String(value).toLowerCase().includes(search);
-          });
-        });
+        result = result.filter(row =>
+          columns.value
+            .filter(col => col.key !== 'actions')
+            .some(col => {
+              const value = row[col.key];
+              return value && String(value).toLowerCase().includes(search);
+            })
+        );
       }
-      
-      // Сортировка
-      if (sortKey.value) {
+
+      if (sortKey.value && sortKey.value !== 'actions') {
         result.sort((a, b) => {
           let valueA = a[sortKey.value];
           let valueB = b[sortKey.value];
-          
-          // Конвертируем значения в нижний регистр для строк
           if (typeof valueA === 'string') valueA = valueA.toLowerCase();
           if (typeof valueB === 'string') valueB = valueB.toLowerCase();
-          
+
           if (valueA < valueB) return sortOrder.value === 'asc' ? -1 : 1;
           if (valueA > valueB) return sortOrder.value === 'asc' ? 1 : -1;
           return 0;
         });
       }
-      
+
       return result;
     });
-    
-    // Функция для изменения сортировки
-    const sortBy = (key) => {
+
+    const sortBy = key => {
+      if (key === 'actions') return;
       if (sortKey.value === key) {
-        // Если нажата та же колонка, меняем порядок сортировки
         sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
       } else {
-        // Если нажата новая колонка, устанавливаем ее и порядок по умолчанию
         sortKey.value = key;
         sortOrder.value = 'asc';
       }
-      
-      // Уведомляем родителя об изменении сортировки
       emit('sort-changed', { key: sortKey.value, order: sortOrder.value });
     };
-    
-    // Обработчик поиска с небольшой задержкой для производительности
-    let searchTimeout;
+
     const handleSearch = () => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        // Дополнительная логика для сложного поиска может быть здесь
-      }, 300);
+      clearTimeout(window._searchTimeout);
+      window._searchTimeout = setTimeout(() => {}, 300);
     };
-    
+
+    const handleActionClick = (row, type) => {
+      emit('action-triggered', { row, type });
+    };
+
+    // Универсальный класс строки:
+    // 1) если в данных явно задан row.rowClass — используем его
+    // 2) иначе, если есть _workActive (учителя) — делаем серым, если false
+    // 3) иначе проверяем Обучение_Статус (ученики)
+    function getRowClass(row) {
+      if (row && row.rowClass) return row.rowClass;
+
+      if (Object.prototype.hasOwnProperty.call(row, '_workActive')) {
+        return row._workActive ? '' : 'row-inactive';
+      }
+
+      const st = row && row.Обучение_Статус;
+      if (
+        st === false || st === 0 ||
+        (typeof st === 'string' && ['неактивен', 'нет', 'false', 'ложь', '0'].includes(st.toLowerCase()))
+      ) {
+        return 'row-inactive';
+      }
+      return '';
+    }
+
+    watch(() => props.tableData, newVal => {
+      data.value = [...newVal];
+    }, { deep: true });
+
+    watch(() => props.tableColumns, newVal => {
+      columns.value = [...newVal];
+    }, { deep: true });
+
     return {
       columns,
-      data,
       searchQuery,
       sortKey,
       sortOrder,
       filteredData,
       sortBy,
-      handleSearch
+      handleSearch,
+      handleActionClick,
+      getRowClass,
     };
-  },
-  
-  // Обновляем данные при изменении props
-  watch: {
-    tableData: {
-      handler(newValue) {
-        this.data = newValue;
-      },
-      deep: true
-    },
-    
-    tableColumns: {
-      handler(newValue) {
-        this.columns = newValue;
-      },
-      deep: true
-    }
   }
-}
+};
 </script>
 
-<!-- Add "scoped" attribute to limit CSS to this component only -->
 <style scoped>
-.data-table-component {
-  font-family: Arial, sans-serif;
-  width: 100%;
-  max-width: 100%;
+.data-table th.non-sortable { cursor: default; }
+.data-table th.non-sortable:hover { background-color: #f8f9fa; }
+.action-button {
+  padding: 5px 10px; background-color: #007bff; color: white; border: none;
+  border-radius: 4px; cursor: pointer; font-size: 13px; transition: background-color 0.2s;
 }
-
-.search-container {
-  margin-bottom: 15px;
-}
-
+.action-button:hover { background-color: #0056b3; }
+.data-table-component { font-family: Arial, sans-serif; width: 100%; max-width: 100%; }
+.search-container { margin-bottom: 15px; }
 .search-input {
-  padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  width: 100%;
-  max-width: 300px;
-  font-size: 14px;
-  transition: border-color 0.2s;
+  padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; width: 100%; max-width: 300px; font-size: 14px; transition: border-color 0.2s;
 }
-
-.search-input:focus {
-  outline: none;
-  border-color: #0077ff;
-  box-shadow: 0 0 0 2px rgba(0, 119, 255, 0.1);
-}
-
-.table-container {
-  overflow-x: auto;
-  max-width: 100%;
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  border: 1px solid #eee;
-}
-
+.search-input:focus { outline: none; border-color: #0077ff; box-shadow: 0 0 0 2px rgba(0,119,255,.1); }
+.table-container { overflow-x: auto; max-width: 100%; }
+.data-table { width: 100%; border-collapse: collapse; border: 1px solid #eee; }
 .data-table th {
-  background-color: #f8f9fa;
-  padding: 12px 15px;
-  text-align: left;
-  font-weight: 600;
-  color: #333;
-  border-bottom: 2px solid #ddd;
-  cursor: pointer;
-  user-select: none;
-  position: relative;
-  transition: background-color 0.2s;
+  background-color: #f8f9fa; padding: 12px 15px; text-align: left; font-weight: 600;
+  color: #333; border-bottom: 2px solid #ddd; cursor: pointer; user-select: none; position: relative; transition: background-color 0.2s;
 }
-
-.data-table th:hover {
-  background-color: #f0f0f0;
-}
-
-.data-table th.active {
-  background-color: #e9ecef;
-}
-
-.data-table td {
-  padding: 10px 15px;
-  border-bottom: 1px solid #eee;
-  color: #333;
-}
-
-.data-table tr:hover {
-  background-color: #f5f5f5;
-}
-
-.data-table .no-results {
-  text-align: center;
-  padding: 20px;
-  color: #666;
-  font-style: italic;
-}
-
-.sort-indicator {
-  display: inline-block;
-  margin-left: 5px;
-  font-size: 0.8em;
-}
-
+.data-table th:hover { background-color: #f0f0f0; }
+.data-table th.active { background-color: #e9ecef; }
+.data-table td { padding: 10px 15px; border-bottom: 1px solid #eee; color: #333; }
+.data-table tr:hover { background-color: #f5f5f5; }
+.data-table .no-results { text-align: center; padding: 20px; color: #666; font-style: italic; }
+.sort-indicator { display: inline-block; margin-left: 5px; font-size: .8em; }
+.row-inactive { opacity: .43; background: #f7f7f7 !important; }
 @media screen and (max-width: 767px) {
-  .data-table th,
-  .data-table td {
-    padding: 8px 10px;
-    font-size: 14px;
-  }
+  .data-table th, .data-table td { padding: 8px 10px; font-size: 14px; }
 }
+.os-missing-row { background-color: #ffe0e6 !important; }
 </style>

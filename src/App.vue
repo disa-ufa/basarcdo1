@@ -1,32 +1,18 @@
 <template>
-   <div>
-    <h2>Список учеников</h2>
-    <DataTable
-      :tableData="users"
-      :tableColumns="columns"
-      initialSortKey="id"
-      initialSortOrder="asc"
-      @sort-changed="onSortChanged"
-    />
-  </div> 
+  <div class="app">
+    <AppSidebar />
+    <div class="content">
+      <router-view></router-view>
+    </div>
+  </div>
 </template>
 
 <script>
-import { ref } from 'vue';
-import DataTable from '@/components/DataTable.vue';
+import AppSidebar from './components/AppSidebar.vue'
 
 export default {
   name: 'App',
-  components: {
-    DataTable
-  },
-  setup() {
-    const activeSection = ref('students');
-    
-    return {
-      activeSection
-    };
-  }
+  components: { AppSidebar }
 }
 </script>
 
