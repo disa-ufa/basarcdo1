@@ -32,7 +32,7 @@
 
 <script>
 import { ref, onMounted, computed } from 'vue';
-import DataTable from '@/components/DataTable.vue';
+import DataTable from '@/components/shared/DataTable.vue';
 import http from '@/api/http';
 
 export default {

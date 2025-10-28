@@ -72,7 +72,6 @@ export default {
       this.error = '';
       this.saving = true;
       try {
-        // Формируем Наименование как Фамилия + Имя + Отчество (через пробел)
         const fio = [this.surname, this.name, this.patronymic].filter(Boolean).join(' ');
         const payload = {
           Фамилия: this.surname,
@@ -100,10 +99,13 @@ export default {
 };
 </script>
 
-
-
-
-
 <style scoped>
-@import "./modal-styles.css";
+.modal-backdrop{position:fixed;z-index:9999;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.12);display:flex;justify-content:flex-end;align-items:stretch}
+.modal-window{background:#fff;width:400px;max-width:100vw;height:100%;box-shadow:-2px 0 24px rgba(0,0,0,.13);position:relative;padding:36px 28px 20px;animation:slideInPanel .35s cubic-bezier(.33,.9,.56,1.02);overflow-y:auto}
+.close-btn{position:absolute;right:16px;top:12px;font-size:22px;background:none;border:none;color:#888;cursor:pointer}
+.form-row{margin-bottom:16px;display:flex;flex-direction:column}
+.form-row label{font-weight:700;margin-bottom:4px}
+.form-row input,.form-row select{font-size:15px;padding:6px 10px;border:1px solid #bbb;border-radius:6px}
+.form-actions{margin-top:18px;display:flex;gap:12px}
+.error-msg{color:#d32f2f;margin:10px 0 0}
 </style>

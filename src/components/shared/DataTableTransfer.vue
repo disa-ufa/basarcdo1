@@ -32,6 +32,7 @@
           <tr v-if="filteredData.length === 0">
             <td :colspan="columns.length" class="no-results">Ничего не найдено</td>
           </tr>
+
           <tr
             v-for="(row, index) in filteredData"
             :key="index"
@@ -41,23 +42,14 @@
           >
             <td v-for="col in columns" :key="col.key">
               <template v-if="col.key === 'actions'">
-                <div v-if="showActionButton(row)">
-                  <button
-                    @click.stop="() => handleActionClick(row, 'default')"
-                    class="action-button"
-                    :disabled="row.adding"
-                  >
-                    {{ row.adding ? 'Добавление...' : 'Добавить' }}
-                  </button>
-                  <button
-                    @click.stop="() => handleActionClick(row, 'hoz')"
-                    class="action-button"
-                    :disabled="row.adding"
-                    style="margin-left: 6px; background-color: #28a745"
-                  >
-                    {{ row.adding ? 'Добавление...' : 'Добавить Хоз' }}
-                  </button>
-                </div>
+                <button
+                  v-if="showActionButton(row)"
+                  @click.stop="() => handleActionClick(row)"
+                  class="action-button"
+                  :disabled="row.adding"
+                >
+                  {{ actionButtonText(row) }}
+                </button>
               </template>
               <template v-else>
                 {{ row[col.key] }}
@@ -74,7 +66,7 @@
 import { ref, computed, watch } from 'vue';
 
 export default {
-  name: 'DataTable',
+  name: 'DataTableTransfer',
   props: {
     tableData: { type: Array, required: true },
     tableColumns: { type: Array, required: true },
@@ -82,9 +74,10 @@ export default {
     initialSortOrder: {
       type: String,
       default: 'asc',
-      validator: value => ['asc', 'desc'].includes(value)
+      validator: v => ['asc', 'desc'].includes(v)
     },
-    actionButtonText: { type: Function, default: () => 'Открыть' },
+    // настраиваемая кнопка
+    actionButtonText: { type: Function, default: () => 'Перевести' },
     showActionButton: { type: Function, default: () => true }
   },
   emits: ['sort-changed', 'action-triggered', 'row-click'],
@@ -143,14 +136,10 @@ export default {
       window._searchTimeout = setTimeout(() => {}, 300);
     };
 
-    const handleActionClick = (row, type) => {
-      emit('action-triggered', { row, type });
+    const handleActionClick = (row) => {
+      emit('action-triggered', { row, type: 'transfer' });
     };
 
-    // Универсальный класс строки:
-    // 1) если в данных явно задан row.rowClass — используем его
-    // 2) иначе, если есть _workActive (учителя) — делаем серым, если false
-    // 3) иначе проверяем Обучение_Статус (ученики)
     function getRowClass(row) {
       if (row && row.rowClass) return row.rowClass;
 

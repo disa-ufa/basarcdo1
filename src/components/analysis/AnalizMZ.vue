@@ -1,16 +1,27 @@
 <script setup>
-import http from '@/api/http';
+import axios from 'axios';
 import { ref, onMounted, computed } from 'vue';
-import DataTable from '@/components/DataTable.vue';
+import DataTable from '@/components/shared/DataTable.vue'
 
 const formatCurrency = (value) => {
   const num = Number(value);
-  return isNaN(num) ? '—' : new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', minimumFractionDigits: 2 }).format(num);
+  return isNaN(num)
+    ? '—'
+    : new Intl.NumberFormat('ru-RU', {
+        style: 'currency',
+        currency: 'RUB',
+        minimumFractionDigits: 2
+      }).format(num);
 };
 
-const API_BGU = '/ARHIV/hs/ARHIV/MZarhiv';
-const API_RCDO = '/RCDO/hs/rcdo/MZ';
-const API_ADD = '/RCDO/hs/rcdo/addMZ';
+const API_BGU = '/api/BGU/hs/inv/mz';
+const API_RCDO = '/api/RCDO/hs/rcdo/MZ';
+const API_ADD = '/api/RCDO/hs/rcdo/addMZ';
+
+const USER_BGU = 'Администратор';
+const PASS_BGU = '159753';
+const USER_RCDO = 'admin';
+const PASS_RCDO = '10028585mM';
 
 const mzBGU = ref([]);
 const mzRCDO = ref([]);
@@ -32,10 +43,17 @@ const columns = [
   { key: 'actions', label: 'Действия' }
 ];
 
+const encodeAuth = (u, p) =>
+  'Basic ' + btoa(unescape(encodeURIComponent(`${u}:${p}`)));
+
+const AUTH_BGU = encodeAuth(USER_BGU, PASS_BGU);
+const AUTH_RCDO = encodeAuth(USER_RCDO, PASS_RCDO);
+
 const fetchBGU = async () => {
-  const res = await http.get(API_BGU);
-  const d = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-  mzBGU.value = d.данные
+  const res = await axios.get(API_BGU, {
+    headers: { Authorization: AUTH_BGU },
+  });
+  mzBGU.value = res.data.данные
     .filter(item => Number(item.Стоимость) > 0)
     .map(item => ({
       ...item,
@@ -54,14 +72,18 @@ const fetchBGU = async () => {
 };
 
 const fetchRCDO = async () => {
-  const res = await http.get(API_RCDO);
-  const d = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-  mzRCDO.value = d.materialnye_zapasy || [];
+  const res = await axios.get(API_RCDO, {
+    headers: { Authorization: AUTH_RCDO },
+  });
+  mzRCDO.value = res.data.materialnye_zapasy || [];
 };
 
 const compare = () => {
   mzBGU.value.forEach(item => {
-    const match = mzRCDO.value.find(mz => (mz.КодПоБгу || '').trim() === item.uniqueKey);
+    const match = mzRCDO.value.find(mz =>
+      (mz.КодПоБгу || '').trim() === item.uniqueKey
+    );
+
     if (!match) {
       item.Статус = 'НОВЫЙ';
       item.isNew = true;
@@ -72,11 +94,13 @@ const compare = () => {
       item.СтоимостьРЦДОFormatted = '-';
       item.МатериальноОтветственныйРЦДО = '-';
     } else {
+      // Запоминаем данные из РЦДО
       item.КоличествоРЦДО = match.Количество;
       item.СтоимостьРЦДО = match.СтоимостьПоследняя;
       item.СтоимостьРЦДОFormatted = formatCurrency(match.СтоимостьПоследняя);
       item.МатериальноОтветственныйРЦДО = match.МатериальноОтветственный;
 
+      // Проверка на расхождения
       const qtyDiff = Number(item.Количество) !== Number(match.Количество);
       const molDiff = (item.МатериальноОтветственный || '').trim() !== (match.МатериальноОтветственный || '').trim();
       const priceDiff = Math.round(Number(item.Стоимость) * 100) !== Math.round(Number(match.СтоимостьПоследняя) * 100);
@@ -85,6 +109,7 @@ const compare = () => {
         item.hasDiscrepancy = true;
         item.isNew = false;
         item.rowClass = 'row-discrepancy-mol';
+
         const diffs = [];
         if (qtyDiff) diffs.push('Кол-во');
         if (molDiff) diffs.push('МОЛ');
@@ -102,11 +127,17 @@ const compare = () => {
 
 const newItems = computed(() => mzBGU.value.filter(i => i.isNew));
 const discrepantItems = computed(() => mzBGU.value.filter(i => i.hasDiscrepancy));
-const displayedItems = computed(() => mzBGU.value.filter(i => i.isNew || i.hasDiscrepancy));
+const displayedItems = computed(() =>
+  mzBGU.value.filter(i => i.isNew || i.hasDiscrepancy)
+);
 
 const addNewItems = async (isHoz = false) => {
   if (!newItems.value.length) return;
-  adding.value = true; addError.value = null; addSuccess.value = null;
+
+  adding.value = true;
+  addError.value = null;
+  addSuccess.value = null;
+
   const payload = newItems.value.map(item => ({
     Код: item.Код,
     НаименованиеМЗ: item.Наименование,
@@ -117,33 +148,50 @@ const addNewItems = async (isHoz = false) => {
   }));
 
   try {
-    await http.post(API_ADD, payload);
+    await axios.post(API_ADD, payload, {
+      headers: {
+        Authorization: AUTH_RCDO,
+        'Content-Type': 'application/json',
+      },
+    });
+
     addSuccess.value = `Добавлено ${payload.length} МЗ (${isHoz ? 'хоз.' : 'нехоз.'}).`;
     await fetchAll();
   } catch (err) {
     addError.value = 'Ошибка при добавлении: ' + (err.message || '');
-  } finally { adding.value = false; }
+  } finally {
+    adding.value = false;
+  }
 };
 
 const addSingleItem = async (item, isHoz = false) => {
   if (!item?.isNew || item.adding) return;
   item.adding = true;
+
   try {
-    await http.post(API_ADD, [{
+    await axios.post(API_ADD, [{
       Код: item.Код,
       НаименованиеМЗ: item.Наименование,
       Количество: item.Количество,
       Стоимость: item.Стоимость,
       МатериальноОтветственный: item.МатериальноОтветственный,
       Хоз: isHoz
-    }]);
+    }], {
+      headers: {
+        Authorization: AUTH_RCDO,
+        'Content-Type': 'application/json',
+      },
+    });
+
     item.Статус = `Добавлен${isHoz ? ' (хоз)' : ''}`;
     item.isNew = false;
     item.rowClass = 'row-added';
   } catch (err) {
     item.Статус = 'Ошибка добавления';
     console.error('Ошибка при добавлении одного МЗ:', err);
-  } finally { item.adding = false; }
+  } finally {
+    item.adding = false;
+  }
 };
 
 const handleRowAction = ({ row, type }) => {
@@ -152,10 +200,19 @@ const handleRowAction = ({ row, type }) => {
 };
 
 const fetchAll = async () => {
-  loading.value = true; error.value = null; mzRCDO.value = [];
-  try { await fetchBGU(); await fetchRCDO(); compare(); }
-  catch (err) { error.value = 'Ошибка при загрузке: ' + (err.message || ''); }
-  finally { loading.value = false; }
+  loading.value = true;
+  error.value = null;
+  mzRCDO.value = [];
+
+  try {
+    await fetchBGU();
+    await fetchRCDO();
+    compare();
+  } catch (err) {
+    error.value = 'Ошибка при загрузке: ' + (err.message || '');
+  } finally {
+    loading.value = false;
+  }
 };
 
 onMounted(fetchAll);
@@ -175,8 +232,12 @@ onMounted(fetchAll);
     <div v-if="error" class="error-message">{{ error }}</div>
 
     <div v-if="!loading && !error && newItems.length" class="add-new-container">
-      <button @click="addNewItems(false)" :disabled="adding" class="add-button">{{ adding ? 'Добавление...' : `Добавить ${newItems.length} новых МЗ` }}</button>
-      <button @click="addNewItems(true)" :disabled="adding" class="add-button" style="margin-left: 10px;">{{ adding ? 'Добавление...' : `Добавить ${newItems.length} новых МЗ Хоз` }}</button>
+      <button @click="addNewItems(false)" :disabled="adding" class="add-button">
+        {{ adding ? 'Добавление...' : `Добавить ${newItems.length} новых МЗ` }}
+      </button>
+      <button @click="addNewItems(true)" :disabled="adding" class="add-button" style="margin-left: 10px;">
+        {{ adding ? 'Добавление...' : `Добавить ${newItems.length} новых МЗ Хоз` }}
+      </button>
       <div v-if="addError" class="error-message">{{ addError }}</div>
       <div v-if="addSuccess" class="success-message">{{ addSuccess }}</div>
     </div>
@@ -191,7 +252,6 @@ onMounted(fetchAll);
     />
   </div>
 </template>
-
 
 <style scoped>
 .loading-indicator, .error-container, .meta-info, .add-new-container {

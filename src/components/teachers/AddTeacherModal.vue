@@ -75,5 +75,5 @@ export default {
 </script>
 
 <style scoped>
-@import "./modal-styles.css";
+
 </style>

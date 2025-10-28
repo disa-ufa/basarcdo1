@@ -1,7 +1,15 @@
 <template>
   <div>
     <h2>Список учеников</h2>
-    <button class="add-btn" @click="showAddModal = true">Добавить ученика</button>
+
+    <!-- Кнопка добавления видна только при праве ДобавлениеУченика -->
+    <button
+      v-if="canAddStudent"
+      class="add-btn"
+      @click="showAddModal = true"
+    >
+      Добавить ученика
+    </button>
 
     <AddStudentModal
       v-if="showAddModal"
@@ -52,23 +60,29 @@
 </template>
 
 <script>
-import { ref, onMounted, computed } from 'vue'
-import DataTable from '@/components/DataTable.vue'
-import AddStudentModal from '@/components/AddStudentModal.vue'
-import EditStudentModal from '@/components/EditStudentModal.vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import DataTable from '@/components/shared/DataTable.vue'
+import AddStudentModal from '@/components/students/AddStudentModal.vue'
+import EditStudentModal from '@/components/students/EditStudentModal.vue'
 import http from '@/api/http'
 
 // Универсальная нормализация любых представлений «да/нет» к Boolean
 function toBool(v) {
   if (typeof v === 'boolean') return v
   if (v == null) return false
-  // числа
   if (typeof v === 'number') return v !== 0
   const s = String(v).trim().toLowerCase()
   if (['да','истина','true','1','активен','учится','обучается','yes','y'].includes(s)) return true
   if (['нет','ложь','false','0','не активен','no','n'].includes(s)) return false
-  // по умолчанию — ложь
   return false
+}
+
+// чтение прав из localStorage
+function readRights() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null')
+    return (u && u.rights) ? u.rights : {}
+  } catch { return {} }
 }
 
 export default {
@@ -98,21 +112,34 @@ export default {
 
     const selectedBranch = ref('Все')
     const branchesList = ref(['Все'])
-    const filialyData = ref([])
 
     const showAddModal = ref(false)
     const showEditModal = ref(false)
     const selectedStudent = ref(null)
 
+    // === права ===
+    const rights = ref(readRights())
+    const canAddStudent  = computed(() => !!rights.value['ДобавлениеУченика'])
+    const canEditStudent = computed(() => !!rights.value['РедактированиеУченика'])
+    const refreshRights = () => { rights.value = readRights() }
+
+    onMounted(() => {
+      fetchAll()
+      window.addEventListener('auth-changed', refreshRights)
+      window.addEventListener('storage', refreshRights)
+    })
+    onBeforeUnmount(() => {
+      window.removeEventListener('auth-changed', refreshRights)
+      window.removeEventListener('storage', refreshRights)
+    })
+
     const fetchFilialy = async () => {
       try {
         const { data } = await http.get('/RCDO/hs/rcdo/MOL')
         const filialy = (typeof data === 'string') ? JSON.parse(data).filialy : data.filialy
-        filialyData.value = filialy || []
-        const allNames = filialyData.value.map(f => f.НаименованиеФилиала || f.Наименование).filter(Boolean)
+        const allNames = (filialy || []).map(f => f.НаименованиеФилиала || f.Наименование).filter(Boolean)
         branchesList.value = ['Все', ...allNames.sort()]
       } catch {
-        filialyData.value = []
         branchesList.value = ['Все']
       }
     }
@@ -159,7 +186,6 @@ export default {
     }
 
     const fetchAll = async () => { loading.value = true; await fetchFilialy(); await fetchStudents() }
-    onMounted(fetchAll)
 
     const filteredStudents = computed(() => {
       let arr = students.value
@@ -172,13 +198,25 @@ export default {
     const handleStudentAdded = () => { showAddModal.value = false; fetchAll() }
     const handleStudentUpdated = () => { showEditModal.value = false; fetchAll() }
     const closeEditModal = () => { showEditModal.value = false }
-    const onRowClick = (student) => { selectedStudent.value = student; showEditModal.value = true }
+
+    // Открытие модалки редактирования только при праве РедактированиеУченика
+    const onRowClick = (student) => {
+      if (!canEditStudent.value) return
+      selectedStudent.value = student
+      showEditModal.value = true
+    }
+
     const onSortChanged = () => {}
 
     return {
+      // таблица / данные
       displayedColumns, students, loading, error, errorDetails, fetchAll, onSortChanged,
-      selectedBranch, branchesList, filteredStudents, showAddModal, handleStudentAdded,
-      showEditModal, selectedStudent, handleStudentUpdated, closeEditModal, onRowClick, showInactiveOnly
+      selectedBranch, branchesList, filteredStudents, showInactiveOnly,
+      // модалки
+      showAddModal, handleStudentAdded,
+      showEditModal, selectedStudent, handleStudentUpdated, closeEditModal, onRowClick,
+      // права
+      canAddStudent, canEditStudent
     }
   }
 }

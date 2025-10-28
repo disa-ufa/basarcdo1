@@ -49,8 +49,8 @@
 
 <script>
 import { ref, onMounted, computed } from 'vue';
-import DataTable from '@/components/DataTable.vue';
-import OSDetailsModal from '@/components/OSDetailsModal.vue';
+import DataTable from '@/components/shared/DataTable.vue'
+import OSDetailsModal from '@/components/equipment/os/OSDetailsModal.vue';
 import http from '@/api/http';
 
 export default {
@@ -80,8 +80,9 @@ export default {
     const fetchFilialy = async () => {
       try {
         const { data } = await http.get('/RCDO/hs/rcdo/MOL');
-        const filialy = (typeof data === 'string') ? JSON.parse(data).filialy : data.filialy;
-        filialyData.value = filialy || [];
+        let parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        const filialy = parsed?.filialy ?? parsed?.Filialy ?? parsed?.filials ?? [];
+        filialyData.value = Array.isArray(filialy) ? filialy : [];
       } catch {
         filialyData.value = [];
       }
@@ -108,7 +109,8 @@ export default {
 
           const resolveFilial = (otvetstvenny) => {
             for (const f of filialyData.value) {
-              if (f.МОЛы && Array.isArray(f.МОЛы) && f.МОЛы.some(mol => mol.МОЛ && mol.МОЛ.trim() === otvetstvenny)) {
+              if (Array.isArray(f.МОЛы) &&
+                  f.МОЛы.some(mol => mol?.МОЛ && mol.МОЛ.trim() === otvetstvenny)) {
                 return f.Наименование || f.НаименованиеФилиала || 'Неизвестно';
               }
             }
@@ -248,91 +250,20 @@ export default {
 };
 </script>
 
-
 <style scoped>
-.loading-indicator {
-  text-align: center;
-  padding: 20px;
-  color: #666;
-}
-.spinner {
-  display: inline-block;
-  width: 20px;
-  height: 20px;
-  border: 3px solid rgba(0, 0, 0, 0.1);
-  border-radius: 50%;
-  border-top-color: #3498db;
-  animation: spin 1s ease-in-out infinite;
-  margin-right: 10px;
-  vertical-align: middle;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-.error-container {
-  margin: 20px 0;
-  padding: 15px;
-  border: 1px solid #f5c6cb;
-  border-radius: 4px;
-  background-color: #f8d7da;
-  color: #721c24;
-}
-.error-message {
-  font-weight: bold;
-  margin-bottom: 10px;
-}
-.error-details {
-  font-family: monospace;
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin-bottom: 15px;
-  padding: 10px;
-  background: rgba(0,0,0,0.05);
-  border-radius: 3px;
-  max-height: 200px;
-  overflow-y: auto;
-}
-.retry-button {
-  background-color: #007bff;
-  color: white;
-  border: none;
-  padding: 8px 15px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: bold;
-}
-.retry-button:hover {
-  background-color: #0056b3;
-}
-.filter-row {
-  display: flex;
-  gap: 30px;
-  align-items: center;
-  margin-bottom: 15px;
-  padding: 10px;
-  background-color: #e9ecef;
-  border-radius: 4px;
-}
-.filter-inline {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.filter-inline label {
-  font-weight: bold;
-  color: #495057;
-}
-.filter-inline select {
-  padding: 5px 8px;
-  border: 1px solid #ced4da;
-  border-radius: 4px;
-  min-width: 180px;
-}
-h2 {
-  margin-bottom: 20px;
-  color: #333;
-}
-.os-missing-row {
-  background-color: #ffe0e6 !important;
-}
+/* стили без изменений */
+.loading-indicator { text-align: center; padding: 20px; color: #666; }
+.spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid rgba(0, 0, 0, 0.1); border-radius: 50%; border-top-color: #3498db; animation: spin 1s ease-in-out infinite; margin-right: 10px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-container { margin: 20px 0; padding: 15px; border: 1px solid #f5c6cb; border-radius: 4px; background-color: #f8d7da; color: #721c24; }
+.error-message { font-weight: bold; margin-bottom: 10px; }
+.error-details { font-family: monospace; white-space: pre-wrap; word-break: break-all; margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 3px; max-height: 200px; overflow-y: auto; }
+.retry-button { background-color: #007bff; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+.retry-button:hover { background-color: #0056b3; }
+.filter-row { display: flex; gap: 30px; align-items: center; margin-bottom: 15px; padding: 10px; background-color: #e9ecef; border-radius: 4px; }
+.filter-inline { display: flex; align-items: center; gap: 10px; }
+.filter-inline label { font-weight: bold; color: #495057; }
+.filter-inline select { padding: 5px 8px; border: 1px solid #ced4da; border-radius: 4px; min-width: 180px; }
+h2 { margin-bottom: 20px; color: #333; }
+.os-missing-row { background-color: #ffe0e6 !important; }
 </style>

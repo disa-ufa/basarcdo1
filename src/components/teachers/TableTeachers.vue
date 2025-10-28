@@ -1,7 +1,15 @@
 <template>
   <div>
     <h2>Список учителей</h2>
-    <button class="add-btn" @click="showAddModal = true">Добавить учителя</button>
+
+    <!-- Кнопка добавления видна только при праве ДобавлениеУчителя -->
+    <button
+      v-if="canAddTeacher"
+      class="add-btn"
+      @click="showAddModal = true"
+    >
+      Добавить учителя
+    </button>
 
     <AddTeacherModal
       v-if="showAddModal"
@@ -52,11 +60,18 @@
 </template>
 
 <script>
-import { ref, onMounted, computed } from 'vue';
-import DataTable from '@/components/DataTable.vue';
-import EditTeacherModal from '@/components/EditTeacherModal.vue';
-import AddTeacherModal from '@/components/AddTeacherModal.vue';
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+import DataTable from '@/components/shared/DataTable.vue';
+import EditTeacherModal from '@/components/teachers/EditTeacherModal.vue'
+import AddTeacherModal from '@/components/teachers/AddTeacherModal.vue'
 import http from '@/api/http';
+
+function readRights () {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null')
+    return (u && u.rights) ? u.rights : {}
+  } catch { return {} }
+}
 
 export default {
   components: { DataTable, EditTeacherModal, AddTeacherModal },
@@ -72,6 +87,7 @@ export default {
       { key: 'Филиал', label: 'Филиал' }
     ];
     const firedColumn = { key: 'Дата_Увольнения', label: 'Дата увольнения' };
+    const showInactiveOnly = ref(false);
     const displayedColumns = computed(() =>
       showInactiveOnly.value ? [...baseColumns, firedColumn] : baseColumns
     );
@@ -83,11 +99,26 @@ export default {
 
     const selectedBranch = ref('Все');
     const branchesList = ref(['Все']);
-    const showInactiveOnly = ref(false);
 
     const showAddModal = ref(false);
     const showEditModal = ref(false);
     const selectedTeacher = ref(null);
+
+    // === права ===
+    const rights = ref(readRights())
+    const canAddTeacher  = computed(() => !!rights.value['ДобавлениеУчителя'])
+    const canEditTeacher = computed(() => !!rights.value['РедактированиеУчителя'])
+    const refreshRights = () => { rights.value = readRights() }
+
+    onMounted(() => {
+      fetchAll()
+      window.addEventListener('auth-changed', refreshRights)
+      window.addEventListener('storage', refreshRights)
+    })
+    onBeforeUnmount(() => {
+      window.removeEventListener('auth-changed', refreshRights)
+      window.removeEventListener('storage', refreshRights)
+    })
 
     const fetchFilialy = async () => {
       try {
@@ -145,7 +176,6 @@ export default {
     };
 
     const fetchAll = async () => { loading.value = true; await fetchFilialy(); await fetchTeachers(); };
-    onMounted(fetchAll);
 
     const filteredTeachers = computed(() => {
       let arr = teachers.value;
@@ -155,14 +185,20 @@ export default {
       if (!showInactiveOnly.value) {
         arr = arr.filter(t => t._workActive);
       }
-      // Подкрашиваем неактивных серым
       return arr.map(t => ({ ...t, rowClass: t._workActive ? '' : 'row-inactive' }));
     });
 
     const handleTeacherAdded   = () => { showAddModal.value = false; fetchAll(); };
     const handleTeacherUpdated = () => { showEditModal.value = false; fetchAll(); };
     const closeEditModal = () => { showEditModal.value = false; };
-    const onRowClick = (teacher) => { selectedTeacher.value = teacher; showEditModal.value = true; };
+
+    // Открытие модалки редактирования только при праве РедактированиеУчителя
+    const onRowClick = (teacher) => {
+      if (!canEditTeacher.value) return;
+      selectedTeacher.value = teacher;
+      showEditModal.value = true;
+    };
+
     const onSortChanged = () => { /* место для будущей логики */ };
 
     return {
@@ -172,7 +208,9 @@ export default {
       filteredTeachers,
       showAddModal, showEditModal, selectedTeacher,
       handleTeacherAdded, handleTeacherUpdated, closeEditModal, onRowClick,
-      fetchAll, onSortChanged
+      fetchAll, onSortChanged,
+      // права
+      canAddTeacher, canEditTeacher
     };
   }
 };
@@ -190,14 +228,12 @@ function normalizeDate(val) {
 }
 
 function parseActive(raw) {
-  // Устойчивый парсер: обрезаем пробелы и учитываем альтернативы
   if (raw === true || raw === 1 || raw === '1') return true;
   if (raw === false || raw === 0 || raw === '0') return false;
   const s = String(raw ?? '').trim().toLowerCase();
   if (!s) return false;
   if (['да','true','истина','активен','работает','on','yes','y'].includes(s)) return true;
   if (['нет','false','ложь','неактивен','уволен','off','no','n'].includes(s)) return false;
-  // неизвестное значение трактуем как false, чтобы не красить активным по ошибке
   return false;
 }
 </script>

@@ -41,7 +41,6 @@
 <script>
 import http from '@/api/http'
 
-// Парсинг входящего статуса из любых «Да/Нет/Истина/true/1…» в Boolean
 function toBool(v) {
   if (typeof v === 'boolean') return v
   if (v == null) return false
@@ -68,7 +67,7 @@ export default {
       orderOut: this.student.Приказ_Об_Отчислении || '',
       address: this.student.Адрес_Регистрации,
       branch: this.student.Филиал,
-      activeStatus: toBool(this.student.Обучение_Статус), // Boolean в v-model
+      activeStatus: toBool(this.student.Обучение_Статус),
       error: '',
       saving: false
     }
@@ -99,7 +98,6 @@ export default {
           Приказ_О_Зачислении: this.order,
           Адрес_Регистрации: this.address,
           Филиал: this.branch,
-          // <== КЛЮЧЕВОЕ: отправляем булево, которое 1С парсит как Истина/Ложь
           Обучение_Статус: !!this.activeStatus,
           Приказ_Об_Отчислении: this.activeStatus === false ? this.orderOut : ""
         }

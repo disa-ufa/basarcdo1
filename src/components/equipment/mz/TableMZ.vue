@@ -42,8 +42,8 @@
 
 <script>
 import { ref, onMounted, computed } from 'vue';
-import DataTable from '@/components/DataTable.vue';
-import MZDetailsModal from '@/components/MZDetailsModal.vue';
+import DataTable from '@/components/shared/DataTable.vue';
+import MZDetailsModal from '@/components/equipment/mz/MZDetailsModal.vue';
 import http from '@/api/http';
 
 export default {
@@ -72,16 +72,17 @@ export default {
     const fetchFilialy = async () => {
       try {
         const { data } = await http.get('/RCDO/hs/rcdo/MOL');
-        const filialy = (typeof data === 'string') ? JSON.parse(data).filialy : data.filialy;
-        filialyData.value = filialy || [];
+        let parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        const filialy = parsed?.filialy ?? parsed?.Filialy ?? parsed?.filials ?? [];
+        filialyData.value = Array.isArray(filialy) ? filialy : [];
       } catch { filialyData.value = []; }
     };
 
     function findFilialByMOL(mol) {
       if (!mol || !filialyData.value.length) return 'Неизвестно';
       for (const f of filialyData.value) {
-        if (f.МОЛы && Array.isArray(f.МОЛы) &&
-          f.МОЛы.some(molItem => typeof molItem.МОЛ === 'string' && molItem.МОЛ.trim() === mol.trim())) {
+        if (Array.isArray(f.МОЛы) &&
+            f.МОЛы.some(molItem => typeof molItem.МОЛ === 'string' && molItem.МОЛ.trim() === mol.trim())) {
           return f.НаименованиеФилиала || f.Наименование || 'Неизвестно';
         }
       }
@@ -152,7 +153,7 @@ export default {
     const filteredMzItems = computed(() => {
       return mzItems.value.filter(item => {
         const byResp = selectedResponsiblePerson.value === 'Все' || item.МатериальноОтветственный === selectedResponsiblePerson.value;
-        const byFilial = selectedFilial.value === 'Все' || item.FилиалRaw === selectedFilial.value || item.ФилиалRaw === selectedFilial.value;
+        const byFilial = selectedFilial.value === 'Все' || item.ФилиалRaw === selectedFilial.value; // <- фикс
         return byResp && byFilial;
       });
     });
@@ -173,10 +174,8 @@ export default {
 }
 </script>
 
-
-
 <style scoped>
-
+/* стили без изменений */
 .loading-indicator {
   text-align: center;
   padding: 20px;
@@ -193,70 +192,15 @@ export default {
   margin-right: 10px;
   vertical-align: middle;
 }
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-.error-container {
-  margin: 20px 0;
-  padding: 15px;
-  border: 1px solid #f5c6cb;
-  border-radius: 4px;
-  background-color: #f8d7da;
-  color: #721c24;
-}
-.error-message {
-  font-weight: bold;
-  margin-bottom: 10px;
-}
-.error-details {
-  font-family: monospace;
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin-bottom: 15px;
-  padding: 10px;
-  background: rgba(0,0,0,0.05);
-  border-radius: 3px;
-  max-height: 200px;
-  overflow-y: auto;
-}
-.retry-button {
-  background-color: #007bff;
-  color: white;
-  border: none;
-  padding: 8px 15px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: bold;
-}
-.retry-button:hover {
-  background-color: #0056b3;
-}
-.filter-row {
-  display: flex;
-  gap: 30px;
-  align-items: center;
-  margin-bottom: 15px;
-  padding: 10px;
-  background-color: #e9ecef;
-  border-radius: 4px;
-}
-.filter-inline {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.filter-inline label {
-  font-weight: bold;
-  color: #495057;
-}
-.filter-inline select {
-  padding: 5px 8px;
-  border: 1px solid #ced4da;
-  border-radius: 4px;
-  min-width: 180px;
-}
-h2 {
-  margin-bottom: 20px;
-  color: #333;
-}
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-container { margin: 20px 0; padding: 15px; border: 1px solid #f5c6cb; border-radius: 4px; background-color: #f8d7da; color: #721c24; }
+.error-message { font-weight: bold; margin-bottom: 10px; }
+.error-details { font-family: monospace; white-space: pre-wrap; word-break: break-all; margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 3px; max-height: 200px; overflow-y: auto; }
+.retry-button { background-color: #007bff; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+.retry-button:hover { background-color: #0056b3; }
+.filter-row { display: flex; gap: 30px; align-items: center; margin-bottom: 15px; padding: 10px; background-color: #e9ecef; border-radius: 4px; }
+.filter-inline { display: flex; align-items: center; gap: 10px; }
+.filter-inline label { font-weight: bold; color: #495057; }
+.filter-inline select { padding: 5px 8px; border: 1px solid #ced4da; border-radius: 4px; min-width: 180px; }
+h2 { margin-bottom: 20px; color: #333; }
 </style>

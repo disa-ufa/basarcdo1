@@ -147,5 +147,5 @@ function parseStatus(raw) {
 </script>
 
 <style scoped>
-@import "./modal-styles.css";
+
 </style>

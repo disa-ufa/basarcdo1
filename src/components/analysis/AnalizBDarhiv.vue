@@ -46,7 +46,7 @@
 
 <script>
 import { ref, onMounted, computed } from 'vue';
-import DataTable from '@/components/DataTable.vue';
+import DataTable from '@/components/shared/DataTable.vue';
 import axios from 'axios';
 
 export default {
@@ -56,12 +56,12 @@ export default {
   },
 
   setup() {
-    const API_BGU_URL = '/api/BGU/hs/inv/os';
+    const API_BGU_URL = '/api/ARHIV/hs/ARHIV/OSarhiv';
     const API_RCDO_URL = '/api/RCDO/hs/rcdo/OS';
     const API_ADD_RCDO_URL = '/api/RCDO/hs/rcdo/addOS';
 
-    const USERNAME_BGU = 'Администратор';
-    const PASSWORD_BGU = '159753';
+    const USERNAME_BGU = 'admin';
+    const PASSWORD_BGU = '10028585mM';
     const USERNAME_RCDO = 'admin';
     const PASSWORD_RCDO = '10028585mM';
 
