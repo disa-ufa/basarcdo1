@@ -1,4 +1,4 @@
-// src/api/http.js //
+// src/api/http.js
 import axios from 'axios';
 
 const http = axios.create({
@@ -6,39 +6,49 @@ const http = axios.create({
   timeout: 45000,
 });
 
-http.interceptors.request.use((cfg) => {
-  const raw = localStorage.getItem('user');
-  let token = null;
-  if (raw) {
-    try {
-      token = JSON.parse(raw)?.token ?? null;
-    } catch (e) {
-      token = null; // не пустой catch
-    }
-  }
+function safeUser() {
+  try { return JSON.parse(localStorage.getItem('user') || 'null') || null; }
+  catch (_e) { return null; } // не пустой catch
+}
 
+// добавить token в query, не перетирая уже заданные params
+function ensureTokenParam(cfg, token) {
+  if (!token) return;
+  if (!cfg.params) cfg.params = {};
+  if (cfg.params.token == null) cfg.params.token = token;
+}
+
+http.interceptors.request.use((cfg) => {
+  const u = safeUser();
+  const token = u?.token || null;
+
+  // базовые заголовки
   cfg.headers = { Accept: 'application/json', ...(cfg.headers || {}) };
 
-  // Если кто-то уже поставил Authorization (например, gateway/Basic) — не трогаем.
+  // gateway: только Bearer (никаких Basic)
   if (token && !cfg.headers.Authorization) {
     cfg.headers.Authorization = `Bearer ${token}`;
   }
+
+  // для 1С: дублируем токен в заголовках и как параметр
+  if (token) {
+    if (!cfg.headers['Token'])        cfg.headers['Token'] = token;
+    if (!cfg.headers['X-Auth-Token']) cfg.headers['X-Auth-Token'] = token;
+    ensureTokenParam(cfg, token);
+  }
+
   return cfg;
 });
 
-// Авторазлогин по 401
+// авто-выход по 401 (событие нужно, чтобы скрыть кнопки/меню на UI)
 http.interceptors.response.use(
   (r) => r,
   (err) => {
-    const status = err?.response?.status;
-    if (status === 401) {
-      try {
-        localStorage.removeItem('user');
-      } catch (e) { void e } // не пустой catch
+    if (err?.response?.status === 401) {
+      try { localStorage.removeItem('user'); }
+      catch (_e) { /* noop */ } // не пустой catch
       window.dispatchEvent(new Event('auth-changed'));
-      if (!location.hash.startsWith('#/login')) {
-        location.hash = '#/login';
-      }
+      if (!location.hash.startsWith('#/login')) location.hash = '#/login';
     }
     return Promise.reject(err);
   }
