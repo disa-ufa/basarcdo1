@@ -22,8 +22,15 @@ http.interceptors.request.use((cfg) => {
   const u = safeUser();
   const token = u?.token || null;
 
-  // базовые заголовки
-  cfg.headers = { Accept: 'application/json', ...(cfg.headers || {}) };
+  // НЕ перезаписываем весь объект headers (иначе теряются method-headers axios)
+  cfg.headers = cfg.headers || {};
+  if (!('Accept' in cfg.headers)) cfg.headers.Accept = 'application/json';
+
+  // Для JSON-запросов выставляем Content-Type, но не трогаем FormData/Blob
+  const isPlainObject = cfg.data && typeof cfg.data === 'object' && !(cfg.data instanceof FormData);
+  if (isPlainObject && !('Content-Type' in cfg.headers)) {
+    cfg.headers['Content-Type'] = 'application/json';
+  }
 
   // gateway: только Bearer (никаких Basic)
   if (token && !cfg.headers.Authorization) {

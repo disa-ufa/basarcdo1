@@ -22,7 +22,7 @@ const loading = ref(false)
 const router = useRouter()
 
 function normalizeUser(payload, fallbackLogin) {
-  // сервер отдаёт: { success, message, user:{ФИО,Логин,Права,token}, role, rights }
+  // сервер отдаёт: { success, message, user:{ФИО,Логин,Права,token, Филиал, Филиал_Код}, role, rights }
   const src = payload?.user && typeof payload.user === 'object' ? payload.user : payload
   return {
     token:   src?.token  ?? src?.Token  ?? payload?.token  ?? null,
@@ -31,6 +31,9 @@ function normalizeUser(payload, fallbackLogin) {
     role:    payload?.role ?? src?.role ?? null,
     rights:  payload?.rights ?? src?.rights ?? {},
     roles:   payload?.roles ?? src?.Роли ?? [],
+    // НОВОЕ: филиал
+    filial:      src?.filial      ?? src?.Филиал      ?? '',
+    filialCode:  src?.filialCode  ?? src?.Филиал_Код  ?? '',
     ts:      Date.now(),
   }
 }
@@ -44,6 +47,26 @@ function firstRouteByRights(rights = {}) {
   return '/'
 }
 
+// Дотягиваем недостающие поля (в т.ч. Филиал) из RightsMe
+async function augmentFromRightsMe(userNow) {
+  try {
+    const { data } = await http.post('/RCDO/hs/rcdo/RightsMe', {})
+    const meUser = data?.user || {}
+    const withMe = {
+      ...userNow,
+      fio:   userNow.fio   || meUser.ФИО   || meUser.fio   || meUser.name || userNow.login || '',
+      login: userNow.login || meUser.Логин || meUser.login || userNow.login || '',
+      role:  userNow.role ?? data?.role ?? null,
+      rights: (userNow.rights && Object.keys(userNow.rights).length) ? userNow.rights : (data?.rights || {}),
+      filial:     userNow.filial     || meUser.Филиал     || meUser.filial     || '',
+      filialCode: userNow.filialCode || meUser.Филиал_Код || meUser.filialCode || '',
+    }
+    return withMe
+  } catch {
+    return userNow
+  }
+}
+
 async function loginFn() {
   error.value = ''
   loading.value = true
@@ -53,11 +76,20 @@ async function loginFn() {
       error.value = data?.message || 'Ошибка входа'
       return
     }
-    const user = normalizeUser(data, login.value)
 
+    // 1) База от Login
+    let user = normalizeUser(data, login.value)
     localStorage.setItem('user', JSON.stringify(user))
-    if (user.fio) localStorage.setItem('fio', user.fio)
+    if (user.fio)    localStorage.setItem('fio', user.fio)
+    if (user.filial) localStorage.setItem('filial', user.filial)
 
+    // 2) Дотягиваем user из RightsMe (даст Филиал/код и, если надо, права)
+    user = await augmentFromRightsMe(user)
+    localStorage.setItem('user', JSON.stringify(user))
+    if (user.fio)    localStorage.setItem('fio', user.fio)
+    if (user.filial) localStorage.setItem('filial', user.filial)
+
+    // уведомим слушателей (топбар и пр.)
     window.dispatchEvent(new Event('auth-changed'))
 
     router.push(firstRouteByRights(user.rights))

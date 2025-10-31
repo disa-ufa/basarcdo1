@@ -62,15 +62,31 @@
 <script>
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import DataTable from '@/components/shared/DataTable.vue';
-import EditTeacherModal from '@/components/teachers/EditTeacherModal.vue'
-import AddTeacherModal from '@/components/teachers/AddTeacherModal.vue'
+import EditTeacherModal from '@/components/teachers/EditTeacherModal.vue';
+import AddTeacherModal from '@/components/teachers/AddTeacherModal.vue';
 import http from '@/api/http';
 
 function readRights () {
   try {
-    const u = JSON.parse(localStorage.getItem('user') || 'null')
-    return (u && u.rights) ? u.rights : {}
-  } catch { return {} }
+    const u = JSON.parse(localStorage.getItem('user') || 'null');
+    return (u && u.rights) ? u.rights : {};
+  } catch { return {}; }
+}
+
+// читаем «филиал пользователя» из localStorage (поддерживаем разные ключи)
+function readUserFilial () {
+  const direct = localStorage.getItem('filial')
+    || localStorage.getItem('Филиал')
+    || localStorage.getItem('branch');
+  if (direct && direct.trim()) return direct.trim();
+
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null');
+    const cand = u?.filial ?? u?.Филиал ?? u?.branch ?? u?.Branch ?? u?.profile?.filial ?? u?.profile?.Филиал;
+    if (typeof cand === 'string' && cand.trim()) return cand.trim();
+  } catch { /* ignore */ }
+
+  return null;
 }
 
 export default {
@@ -105,20 +121,35 @@ export default {
     const selectedTeacher = ref(null);
 
     // === права ===
-    const rights = ref(readRights())
-    const canAddTeacher  = computed(() => !!rights.value['ДобавлениеУчителя'])
-    const canEditTeacher = computed(() => !!rights.value['РедактированиеУчителя'])
-    const refreshRights = () => { rights.value = readRights() }
+    const rights = ref(readRights());
+    const canAddTeacher  = computed(() => !!rights.value['ДобавлениеУчителя']);
+    const canEditTeacher = computed(() => !!rights.value['РедактированиеУчителя']);
+    const refreshRights = () => { rights.value = readRights(); };
+
+    // применяем «филиал по умолчанию»
+    const applyDefaultBranch = () => {
+      const def = readUserFilial();
+      if (def && branchesList.value.includes(def)) {
+        selectedBranch.value = def;
+      } else {
+        selectedBranch.value = 'Все';
+      }
+    };
+
+    function onAuthRelatedChange () {
+      refreshRights();
+      applyDefaultBranch();
+    }
 
     onMounted(() => {
-      fetchAll()
-      window.addEventListener('auth-changed', refreshRights)
-      window.addEventListener('storage', refreshRights)
-    })
+      fetchAll();
+      window.addEventListener('auth-changed', onAuthRelatedChange);
+      window.addEventListener('storage', onAuthRelatedChange);
+    });
     onBeforeUnmount(() => {
-      window.removeEventListener('auth-changed', refreshRights)
-      window.removeEventListener('storage', refreshRights)
-    })
+      window.removeEventListener('auth-changed', onAuthRelatedChange);
+      window.removeEventListener('storage', onAuthRelatedChange);
+    });
 
     const fetchFilialy = async () => {
       try {
@@ -126,10 +157,13 @@ export default {
         const filialy = (typeof data === 'string') ? JSON.parse(data).filialy : data.filialy;
         const names = (filialy || []).map(x => x.НаименованиеФилиала || x.Наименование).filter(Boolean);
         branchesList.value = ['Все', ...names.sort()];
+        // после загрузки списка филиалов выбираем дефолт из профиля
+        applyDefaultBranch();
       } catch (e) {
         // eslint-disable-next-line no-console
         console.debug('Не удалось получить MOL:', e && e.message);
         branchesList.value = ['Все'];
+        selectedBranch.value = 'Все';
       }
     };
 
@@ -138,7 +172,6 @@ export default {
         loading.value = true;
         error.value = null;
         errorDetails.value = null;
-        selectedBranch.value = 'Все';
         teachers.value = [];
 
         const { data: resp } = await http.get('/RCDO/hs/rcdo/teachers');
@@ -179,27 +212,30 @@ export default {
 
     const filteredTeachers = computed(() => {
       let arr = teachers.value;
-      if (selectedBranch.value !== 'Все') {
-        arr = arr.filter(t => t.Филиал === selectedBranch.value);
+      const sel = (selectedBranch.value || '').trim();
+      if (sel !== 'Все') {
+        arr = arr.filter(t => (t.Филиал || '').trim() === sel);
       }
       if (!showInactiveOnly.value) {
         arr = arr.filter(t => t._workActive);
       }
-      return arr.map(t => ({ ...t, rowClass: t._workActive ? '' : 'row-inactive' }));
+      return arr.map(t => ({
+        ...t,
+        rowClass: t._workActive ? '' : 'inactive-row'
+      }));
     });
 
     const handleTeacherAdded   = () => { showAddModal.value = false; fetchAll(); };
     const handleTeacherUpdated = () => { showEditModal.value = false; fetchAll(); };
     const closeEditModal = () => { showEditModal.value = false; };
 
-    // Открытие модалки редактирования только при праве РедактированиеУчителя
     const onRowClick = (teacher) => {
       if (!canEditTeacher.value) return;
       selectedTeacher.value = teacher;
       showEditModal.value = true;
     };
 
-    const onSortChanged = () => { /* место для будущей логики */ };
+    const onSortChanged = () => undefined;
 
     return {
       displayedColumns,
@@ -209,7 +245,6 @@ export default {
       showAddModal, showEditModal, selectedTeacher,
       handleTeacherAdded, handleTeacherUpdated, closeEditModal, onRowClick,
       fetchAll, onSortChanged,
-      // права
       canAddTeacher, canEditTeacher
     };
   }
@@ -254,7 +289,7 @@ function parseActive(raw) {
 .filter-container select{padding:5px 8px;border:1px solid #ced4da;border-radius:4px;min-width:200px}
 .ml-3{margin-left:16px}
 
-/* Серые строки — неработающие */
-.inactive-row { background:#f3f4f6; color:#6b7280; }
-.inactive-row td { color:#6b7280 !important; }
+/* Подсветка неработающих, применяемая к строкам внутри DataTable */
+:deep(tr.inactive-row) { background:#f3f4f6; color:#6b7280; }
+:deep(tr.inactive-row td) { color:#6b7280 !important; }
 </style>

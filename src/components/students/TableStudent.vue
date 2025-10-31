@@ -85,6 +85,24 @@ function readRights() {
   } catch { return {} }
 }
 
+// чтение филиала пользователя из localStorage (fallback на разные возможные поля)
+function readUserFilial() {
+  const direct = localStorage.getItem('filial') || localStorage.getItem('Филиал') || localStorage.getItem('branch')
+  if (direct && direct.trim()) return direct.trim()
+
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null')
+    const cand =
+      u?.filial ?? u?.Филиал ?? u?.branch ?? u?.Branch ?? u?.profile?.filial ?? u?.profile?.Филиал
+    if (typeof cand === 'string' && cand.trim()) return cand.trim()
+  } catch (e) {
+    // некорректный JSON в localStorage — просто считаем, что филиал не задан
+    return null
+  }
+
+  return null
+}
+
 export default {
   components: { DataTable, AddStudentModal, EditStudentModal },
   setup() {
@@ -123,15 +141,30 @@ export default {
     const canEditStudent = computed(() => !!rights.value['РедактированиеУченика'])
     const refreshRights = () => { rights.value = readRights() }
 
+    // применить «филиал по умолчанию» к выпадающему списку
+    const applyDefaultBranch = () => {
+      const def = readUserFilial()
+      if (def && branchesList.value.includes(def)) {
+        selectedBranch.value = def
+      } else {
+        selectedBranch.value = 'Все'
+      }
+    }
+
     onMounted(() => {
       fetchAll()
-      window.addEventListener('auth-changed', refreshRights)
-      window.addEventListener('storage', refreshRights)
+      window.addEventListener('auth-changed', onAuthRelatedChange)
+      window.addEventListener('storage', onAuthRelatedChange)
     })
     onBeforeUnmount(() => {
-      window.removeEventListener('auth-changed', refreshRights)
-      window.removeEventListener('storage', refreshRights)
+      window.removeEventListener('auth-changed', onAuthRelatedChange)
+      window.removeEventListener('storage', onAuthRelatedChange)
     })
+
+    function onAuthRelatedChange () {
+      refreshRights()
+      applyDefaultBranch()
+    }
 
     const fetchFilialy = async () => {
       try {
@@ -139,8 +172,11 @@ export default {
         const filialy = (typeof data === 'string') ? JSON.parse(data).filialy : data.filialy
         const allNames = (filialy || []).map(f => f.НаименованиеФилиала || f.Наименование).filter(Boolean)
         branchesList.value = ['Все', ...allNames.sort()]
+        // после загрузки списка филиалов — выбрать дефолтный из профиля
+        applyDefaultBranch()
       } catch {
         branchesList.value = ['Все']
+        selectedBranch.value = 'Все'
       }
     }
 
@@ -150,7 +186,7 @@ export default {
         error.value = null
         errorDetails.value = null
         students.value = []
-        selectedBranch.value = 'Все'
+        // НЕ сбрасываем selectedBranch — сохраняем выбор/дефолт
         const { data: resp } = await http.get('/RCDO/hs/rcdo/ucenici')
         if (resp && Array.isArray(resp.ученики)) {
           students.value = resp.ученики.map(student => {
@@ -162,7 +198,7 @@ export default {
               else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) formattedDate = dateStr.split('-').reverse().join('.')
               else formattedDate = dateStr
             }
-            const branch = student.Филиал ? student.Филиал.trim() : 'Не указан'
+            const branch = student.Филиал ? String(student.Филиал).trim() : 'Не указан'
             return { ...student, Дата_Поступления: formattedDate, _statusBool: toBool(student.Обучение_Статус), Филиал: branch }
           })
         } else {
@@ -189,7 +225,8 @@ export default {
 
     const filteredStudents = computed(() => {
       let arr = students.value
-      if (selectedBranch.value !== 'Все') arr = arr.filter(s => s.Филиал === selectedBranch.value)
+      const sel = (selectedBranch.value || '').trim()
+      if (sel !== 'Все') arr = arr.filter(s => (s.Филиал || '').trim() === sel)
       if (showInactiveOnly.value) return arr
       arr = arr.filter(s => s._statusBool)
       return arr.map(stud => ({ ...stud, rowClass: !stud._statusBool ? 'inactive-row' : '' }))
@@ -206,7 +243,8 @@ export default {
       showEditModal.value = true
     }
 
-    const onSortChanged = () => {}
+    // заглушка сортировки — не пустая для ESLint
+    const onSortChanged = () => { return }
 
     return {
       // таблица / данные
