@@ -39,16 +39,14 @@ function readFromStorage () {
     localStorage.getItem('login') ||
     'Пользователь'
 
-  // НОВОЕ: филиал берём из user (filial/Филиал) или из отдельного ключа
+  // филиал: из user (filial/Филиал) либо отдельный ключ
   filialStore.value =
     (parsed && (parsed.filial || parsed['Филиал'])) ||
     localStorage.getItem('filial') ||
     ''
 }
 
-function onAuthChanged() {
-  readFromStorage()
-}
+function onAuthChanged() { readFromStorage() }
 
 onMounted(() => {
   readFromStorage()
@@ -76,7 +74,6 @@ function logout () {
     'username','login','fio','filial'
   ]
   keys.forEach(k => localStorage.removeItem(k))
-
   window.dispatchEvent(new Event('auth-changed'))
   router.push('/login')
 }

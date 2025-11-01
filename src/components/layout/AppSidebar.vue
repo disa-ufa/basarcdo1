@@ -44,9 +44,8 @@ function can(flag) {
   if (!flag) return true
   return !!rights.value?.[flag]
 }
-function onAuthChanged() {
-  readRights()
-}
+function onAuthChanged() { readRights() }
+
 onMounted(() => {
   readRights()
   window.addEventListener('auth-changed', onAuthChanged)

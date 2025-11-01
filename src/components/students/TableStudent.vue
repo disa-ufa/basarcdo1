@@ -95,8 +95,7 @@ function readUserFilial() {
     const cand =
       u?.filial ?? u?.Филиал ?? u?.branch ?? u?.Branch ?? u?.profile?.filial ?? u?.profile?.Филиал
     if (typeof cand === 'string' && cand.trim()) return cand.trim()
-  } catch (e) {
-    // некорректный JSON в localStorage — просто считаем, что филиал не задан
+  } catch (_e) {
     return null
   }
 
@@ -243,8 +242,8 @@ export default {
       showEditModal.value = true
     }
 
-    // заглушка сортировки — не пустая для ESLint
-    const onSortChanged = () => { return }
+    // без неиспользуемых аргументов, чтобы не триггерить no-unused-vars
+    const onSortChanged = () => { /* noop */ }
 
     return {
       // таблица / данные

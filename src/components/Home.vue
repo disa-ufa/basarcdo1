@@ -1,8 +1,5 @@
-<script setup>
-
-
-
-
+<script>
+export default { name: 'AppHome' }
 </script>
 
 <template>
@@ -12,13 +9,10 @@
   </div>
 </template>
 
-<style>
-.app {
-  display: flex;
-  min-height: 100vh;
-}
-.content {
-  flex: 1;
+<style scoped>
+.page{
+  min-height: calc(100vh - 56px);
+  box-sizing: border-box;
   padding: 20px;
   background: #f6f7fb;
 }

@@ -60,9 +60,19 @@ export default {
     return {
       surname: '', name: '', patronymic: '',
       date: '', klass: '', order: '', address: '',
-      branch: (this.branches && this.branches[0]) || '',
+      branch: '', // выберем ниже через watch(immediate)
       error: '', saving: false,
     };
+  },
+  watch: {
+    // как только придёт список филиалов, выбрать первый НЕ "Все"
+    branches: {
+      immediate: true,
+      handler (arr) {
+        const firstValid = (arr || []).find(b => b && b !== 'Все') || (arr && arr[0]) || ''
+        if (!this.branch && firstValid) this.branch = firstValid
+      }
+    }
   },
   methods: {
     async addStudent() {
@@ -105,4 +115,4 @@ export default {
 .form-row input,.form-row select{font-size:15px;padding:6px 10px;border:1px solid #bbb;border-radius:6px}
 .form-actions{margin-top:18px;display:flex;gap:12px}
 .error-msg{color:#d32f2f;margin:10px 0 0}
-</style> 
+</style>
