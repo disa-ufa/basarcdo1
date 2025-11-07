@@ -2,101 +2,64 @@
 import axios from 'axios';
 
 const http = axios.create({
-  baseURL: '/api',
+  baseURL:
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) ||
+    process.env.VUE_APP_API_BASE_URL ||
+    '/api',
   timeout: 45000,
+  withCredentials: false,
 });
 
-/** Безопасное чтение user из LS */
-function safeUser() {
+/** Безопасно читаем токен из localStorage */
+function readToken() {
   try {
-    return JSON.parse(localStorage.getItem('user') || 'null') || null;
-  } catch (_e) {
+    const raw = localStorage.getItem('user');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.token || null;
+  } catch (e) {
     return null;
   }
 }
 
-/** Эндпоинты со «строгим» парсингом query — нельзя добавлять ничего лишнего */
-function isStrictQueryEndpoint(url) {
-  // Работаем по относительному пути, допускаем варианты:
-  // '/Dogovor', 'Dogovor', '/api/Dogovor', а также 'URLUD_ДоговорПоНомеру'
-  const s = String(url || '');
-  const STRICT_RE = /^(?:\/api\/|\/)?(?:Dogovor|URLUD_ДоговорПоНомеру)(?:\/|\b)/i;
-  return STRICT_RE.test(s);
-}
+/** REQUEST: подставляем заголовки и токен */
+http.interceptors.request.use(
+  (cfg) => {
+    const token = readToken();
 
-http.interceptors.request.use((cfg) => {
-  const u = safeUser();
-  const token = u?.token || null;
+    // Базовые заголовки
+    cfg.headers = { Accept: 'application/json', ...(cfg.headers || {}) };
 
-  // Базовые заголовки
-  cfg.headers = cfg.headers || {};
-  if (!('Accept' in cfg.headers)) cfg.headers.Accept = 'application/json';
+    // Для JSON-запросов (POST/PUT/PATCH) ставим Content-Type если он не задан
+    const method = (cfg.method || 'get').toLowerCase();
+    if (['post', 'put', 'patch'].includes(method) && cfg.data && !cfg.headers['Content-Type']) {
+      cfg.headers['Content-Type'] = 'application/json';
+    }
 
-  // Проставляем Content-Type только для простых объектов (не FormData/Blob)
-  const isPlainObject =
-    cfg.data &&
-    typeof cfg.data === 'object' &&
-    !(cfg.data instanceof FormData) &&
-    !(cfg.data instanceof Blob);
-
-  if (isPlainObject && !('Content-Type' in cfg.headers)) {
-    cfg.headers['Content-Type'] = 'application/json';
-  }
-
-  // Никогда не подмешиваем ?token=...
-  if (cfg.params && Object.prototype.hasOwnProperty.call(cfg.params, 'token')) {
-    delete cfg.params.token;
-  }
-
-  const strict = isStrictQueryEndpoint(cfg.url);
-
-  if (strict) {
-    // Для строгих ручек — НИКАКИХ auth-заголовков
-    delete cfg.headers.Authorization;
-    delete cfg.headers.Token;
-    delete cfg.headers['X-Auth-Token'];
-
-    // В query оставляем только nomer (обрезаем пробелы)
-    const nomer =
-      cfg?.params && cfg.params.nomer != null
-        ? String(cfg.params.nomer).trim()
-        : undefined;
-
-    cfg.params = nomer !== undefined ? { nomer } : undefined;
-
-    // На всякий случай задаём сериализацию "nomer=..."
-    cfg.paramsSerializer = (params) => {
-      if (!params || params.nomer == null) return '';
-      return 'nomer=' + encodeURIComponent(String(params.nomer));
-    };
-  } else {
-    // Обычные ручки — Bearer в Authorization и дубли в X-заголовки для 1С
+    // Авторизация: Bearer + дубли под 1С
     if (token && !cfg.headers.Authorization) {
       cfg.headers.Authorization = `Bearer ${token}`;
+      cfg.headers.Token = cfg.headers.Token || token;
+      cfg.headers['X-Auth-Token'] = cfg.headers['X-Auth-Token'] || token;
     }
-    if (token) {
-      if (!cfg.headers.Token) cfg.headers.Token = token;
-      if (!cfg.headers['X-Auth-Token']) cfg.headers['X-Auth-Token'] = token;
-    }
-  }
 
-  return cfg;
-});
+    return cfg;
+  },
+  (error) => Promise.reject(error)
+);
 
-// Авто-выход по 401
+/** RESPONSE: нормализуем ошибки */
 http.interceptors.response.use(
-  (r) => r,
-  (err) => {
-    if (err?.response?.status === 401) {
-      try {
-        localStorage.removeItem('user');
-      } catch (_e) {
-        // ignore
-      }
-      window.dispatchEvent(new Event('auth-changed'));
-      if (!location.hash.startsWith('#/login')) location.hash = '#/login';
+  (resp) => resp,
+  (error) => {
+    if (error?.response?.status === 401) {
+      // при необходимости можно разлогинить:
+      // localStorage.removeItem('user');
     }
-    return Promise.reject(err);
+
+    // Возвращаем полезное тело ошибки, если есть
+    const payload = error?.response?.data ?? { message: error?.message || 'Network error' };
+    return Promise.reject(payload);
   }
 );
 

@@ -65,7 +65,6 @@
 
 <script>
 import { ref, computed, onMounted, watch } from "vue";
-// используем общий axios-инстанс, если он есть; если нет — можно оставить import axios from "axios"
 import http from "@/api/http";
 
 const basic = "Basic " + btoa("admin:10028585mM");
@@ -87,7 +86,7 @@ export default {
     const busyFioSet = ref(new Set());
     const branchesList = ref([]);
 
-    // --- load helpers -------------------------------------------------------
+    // --- загрузки -----------------------------------------------------------
     const fetchBranches = async () => {
       try {
         const { data } = await http.get("/RCDO/hs/rcdo/MOL", {
@@ -141,22 +140,16 @@ export default {
       }
     };
 
-    // --- defaults & derived -------------------------------------------------
+    // --- derived ------------------------------------------------------------
     const getNextContractNumber = () => {
       let maxNum = 0;
       for (const c of allContracts.value) {
         let num = 0;
         if (typeof c.Номер_Договора === "number") {
           num = c.Номер_Договора;
-        } else if (
-          c.Номер_Договора &&
-          !Number.isNaN(Number(String(c.Номер_Договора).trim()))
-        ) {
+        } else if (c.Номер_Договора && !Number.isNaN(Number(String(c.Номер_Договора).trim()))) {
           num = Number(String(c.Номер_Договора).trim());
-        } else if (
-          c.Наименование &&
-          !Number.isNaN(Number(String(c.Наименование).trim()))
-        ) {
+        } else if (c.Наименование && !Number.isNaN(Number(String(c.Наименование).trim()))) {
           num = Number(String(c.Наименование).trim());
         }
         if (num > maxNum) maxNum = num;
@@ -170,7 +163,6 @@ export default {
       branch.value = "";
       number.value = getNextContractNumber();
       if (!date.value) {
-        // сегодняшняя дата по умолчанию
         const d = new Date();
         const mm = String(d.getMonth() + 1).padStart(2, "0");
         const dd = String(d.getDate()).padStart(2, "0");
@@ -190,9 +182,7 @@ export default {
       return [];
     });
 
-    watch(userType, () => {
-      fio.value = "";
-    });
+    watch(userType, () => { fio.value = ""; });
 
     watch(branchesList, () => {
       if (branch.value && !branchesList.value.includes(branch.value)) {
@@ -202,23 +192,12 @@ export default {
 
     const canSubmit = computed(() => {
       const numOk = String(number.value || "").trim() !== "";
-      return (
-        numOk &&
-        !!date.value &&
-        !!userType.value &&
-        !!fio.value &&
-        !!branch.value
-      );
+      return numOk && !!date.value && !!userType.value && !!fio.value && !!branch.value;
     });
 
     // --- actions ------------------------------------------------------------
     const loadAll = async () => {
-      await Promise.all([
-        fetchBranches(),
-        fetchContracts(),
-        fetchStudents(),
-        fetchTeachers(),
-      ]);
+      await Promise.all([fetchBranches(), fetchContracts(), fetchStudents(), fetchTeachers()]);
       setDefaults();
     };
 
@@ -228,7 +207,6 @@ export default {
 
       saving.value = true;
       try {
-        // полезно держать номер как число для 1С, но отправим как есть — сервер приведёт
         const payload = {
           Номер_Договора: Number(number.value),
           Дата_Подписания: date.value,
@@ -242,14 +220,8 @@ export default {
           headers: { Authorization: basic },
         });
 
-        // 2) забираем его по номеру (ВАЖНО: передаём номер через params!)
-        const { data } = await http.get("/RCDO/hs/rcdo/Dogovor", {
-          params: { nomer: Number(number.value) },
-          headers: { Authorization: basic },
-        });
-
-        // 3) поднимаем событие наверх (открытие модалки редактирования)
-        emit("contract-added", data);
+        // 2) поднимаем событие вверх — просто номер (модалка сама подгрузит)
+        emit("contract-added", Number(number.value));
       } catch (e) {
         const msg =
           e?.response?.data?.message ||
@@ -265,86 +237,22 @@ export default {
     onMounted(loadAll);
 
     return {
-      number,
-      date,
-      userType,
-      fio,
-      branch,
-      error,
-      saving,
-      branchesList,
-      fioOptions,
-      canSubmit,
-      addContract,
+      number, date, userType, fio, branch, error, saving,
+      branchesList, fioOptions, canSubmit, addContract,
     };
   },
 };
 </script>
 
 <style scoped>
-.modal-backdrop {
-  position: fixed;
-  z-index: 9999;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.12);
-  display: flex;
-  justify-content: flex-end;
-  align-items: stretch;
-}
-.modal-window {
-  background: #fff;
-  width: 420px;
-  max-width: 100vw;
-  height: 100%;
-  box-shadow: -2px 0 24px rgba(0, 0, 0, 0.13);
-  position: relative;
-  padding: 36px 28px 20px;
-  animation: slideInPanel 0.35s cubic-bezier(0.33, 0.9, 0.56, 1.02);
-  overflow-y: auto;
-}
-@keyframes slideInPanel {
-  from {
-    transform: translateX(100%);
-    opacity: 0.3;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-.close-btn {
-  position: absolute;
-  right: 16px;
-  top: 12px;
-  font-size: 22px;
-  background: none;
-  border: none;
-  color: #888;
-  cursor: pointer;
-}
-.form-row {
-  margin-bottom: 16px;
-  display: flex;
-  flex-direction: column;
-}
-.form-row label {
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-.form-row input,
-.form-row select {
-  font-size: 15px;
-  padding: 6px 10px;
-  border: 1px solid #bbb;
-  border-radius: 6px;
-}
-.form-actions {
-  margin-top: 18px;
-  display: flex;
-  gap: 12px;
-}
-.error-msg {
-  color: #d32f2f;
-  margin-top: 10px;
-}
+/* стили без изменений */
+.modal-backdrop{position:fixed;z-index:9999;inset:0;background:rgba(0,0,0,.12);display:flex;justify-content:flex-end;align-items:stretch}
+.modal-window{background:#fff;width:420px;max-width:100vw;height:100%;box-shadow:-2px 0 24px rgba(0,0,0,.13);position:relative;padding:36px 28px 20px;animation:slideInPanel .35s cubic-bezier(.33,.9,.56,1.02);overflow-y:auto}
+@keyframes slideInPanel{from{transform:translateX(100%);opacity:.3}to{transform:translateX(0);opacity:1}}
+.close-btn{position:absolute;right:16px;top:12px;font-size:22px;background:none;border:none;color:#888;cursor:pointer}
+.form-row{margin-bottom:16px;display:flex;flex-direction:column}
+.form-row label{font-weight:600;margin-bottom:4px}
+.form-row input,.form-row select{font-size:15px;padding:6px 10px;border:1px solid #bbb;border-radius:6px}
+.form-actions{margin-top:18px;display:flex;gap:12px}
+.error-msg{color:#d32f2f;margin-top:10px}
 </style>

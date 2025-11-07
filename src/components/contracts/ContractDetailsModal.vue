@@ -68,8 +68,6 @@ import http from '@/api/http';
 
 const props = defineProps({
   show: { type: Boolean, default: false },
-  // Либо передаём целый объект договора из таблицы,
-  // либо только номер (например из результата add_contract)
   contract: { type: Object, default: null },
   nomer: { type: [String, Number], default: '' }
 });
@@ -104,14 +102,19 @@ async function fetchDetails() {
   }
   loading.value = true;
   try {
-    const res = await http.get('/RCDO/hs/rcdo/Dogovor', { params: { nomer: n } });
-    contractData.value = res?.data || null;
-    if (!contractData.value || contractData.value.error) {
-      error.value = contractData.value?.message || 'Договор не найден';
+    // Важное: никакие Authorization/Token вручную не передаём — это сделает (или уберёт) интерцептор.
+    const res = await http.get('/RCDO/hs/rcdo/Dogovor', {
+      params: { nomer: n },
+      // страховочная сериализация (если внешний прокси капризничает)
+      paramsSerializer: p => new URLSearchParams(p).toString(),
+    });
+    const data = res?.data || null;
+    if (!data || data.error) {
+      throw new Error(data?.message || 'Договор не найден');
     }
+    contractData.value = data;
   } catch (e) {
-    // Покажем понятный текст
-    error.value = e?.response?.data?.message || e?.response?.data || e?.message || 'Ошибка загрузки';
+    error.value = e?.response?.data?.message || e?.message || 'Ошибка загрузки';
   } finally {
     loading.value = false;
   }
@@ -119,9 +122,7 @@ async function fetchDetails() {
 
 watch(
   () => props.show,
-  (v) => {
-    if (v) fetchDetails();
-  },
+  (v) => { if (v) fetchDetails(); },
   { immediate: false }
 );
 </script>

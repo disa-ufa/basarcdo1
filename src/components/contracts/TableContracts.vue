@@ -1,4 +1,4 @@
-<!-- src/components/TableContracts.vue -->
+<!-- src/components/contracts/TableContracts.vue -->
 <template>
   <div>
     <h2>Список договоров</h2>
@@ -18,19 +18,22 @@
 
     <div v-if="error" class="error-container">
       <p class="error-message">{{ error }}</p>
-      <p class="error-details" v-if="errorDetails">Техническая информация: {{ errorDetails }}</p>
+      <p class="error-details" v-if="errorDetails">
+        Техническая информация: {{ errorDetails }}
+      </p>
       <button @click="fetchContracts" class="retry-button">Попробовать снова</button>
     </div>
 
     <div class="filters-group" v-if="!loading && !error && contracts.length > 0">
       <div class="filter-container" v-if="usersList.length > 1">
-        <label for="user-filter">Фильтр по пользователю: </label>
+        <label for="user-filter">Фильтр по пользователю:</label>
         <select id="user-filter" v-model="selectedUser">
           <option v-for="user in usersList" :key="user" :value="user">{{ user }}</option>
         </select>
       </div>
+
       <div class="filter-container" v-if="branchesList.length > 1">
-        <label for="branch-filter">Фильтр по филиалу: </label>
+        <label for="branch-filter">Фильтр по филиалу:</label>
         <select id="branch-filter" v-model="selectedBranch">
           <option v-for="branch in branchesList" :key="branch" :value="branch">{{ branch }}</option>
         </select>
@@ -48,28 +51,19 @@
     />
 
     <ContractDetailsModal
-      ref="detailsModalRef"
-      :visible="isModalVisible"
-      :loading="modalLoading"
-      :error="modalError"
-      :errorDetails="modalErrorDetails"
-      :contractData="modalContractData"
-      :contractRaw="modalContractDetailsRaw"
-      :formatDate="formatDate"
-      :formatDateTime="formatDateTime"
-      :formatCurrency="formatCurrency"
-      :autoEdit="autoEditMode"
+      :show="isModalVisible"
+      :contract="currentContract"
+      :nomer="currentContractNumber"
       @close="closeModal"
-      @retry="retryFetchContractDetails"
     />
   </div>
 </template>
 
 <script>
 import { ref, onMounted, computed, nextTick } from 'vue';
-import DataTableRed from '@/components/shared/DataTableRed.vue';
-import ContractDetailsModal from '@/components/contracts/ContractDetailsModal.vue';
-import AddContractModal from '@/components/contracts/AddContractModal.vue';
+import DataTableRed from '@/components/shared/DataTableRed.vue';           // ✅ правильный путь
+import ContractDetailsModal from './ContractDetailsModal.vue';      // относительный импорт
+import AddContractModal from './AddContractModal.vue';              // относительный импорт
 import http from '@/api/http';
 
 export default {
@@ -99,16 +93,8 @@ export default {
     const showAddModal = ref(false);
 
     const isModalVisible = ref(false);
-    const modalLoading = ref(false);
-    const modalError = ref(null);
-    const modalErrorDetails = ref(null);
-    const modalContractDetailsRaw = ref(null);
     const currentContractNumber = ref(null);
-
-    const autoEditMode = ref(false);
-    const detailsModalRef = ref(null);
-
-    const modalContractData = computed(() => modalContractDetailsRaw.value?.договор || null);
+    const currentContract = ref(null);
 
     const formatDate = (dateStr) => {
       if (!dateStr || dateStr === '0001-01-01T00:00:00' || dateStr === '0001-01-01') return 'Не указана';
@@ -124,20 +110,9 @@ export default {
           return dateStr;
         }
         return d.toLocaleDateString('ru-RU');
-      } catch { return dateStr; }
-    };
-
-    const formatDateTime = (dateTimeStr) => {
-      if (!dateTimeStr) return 'Неизвестно';
-      try {
-        const d = new Date(dateTimeStr);
-        return isNaN(d.getTime()) ? dateTimeStr : d.toLocaleString('ru-RU');
-      } catch { return dateTimeStr; }
-    };
-
-    const formatCurrency = (value) => {
-      if (typeof value !== 'number') return value;
-      return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', minimumFractionDigits: 2 }).format(value);
+      } catch {
+        return dateStr;
+      }
     };
 
     const fetchContracts = async () => {
@@ -145,6 +120,7 @@ export default {
         loading.value = true;
         error.value = null;
         errorDetails.value = null;
+
         contracts.value = [];
         usersList.value = ['Все'];
         branchesList.value = ['Все'];
@@ -156,14 +132,14 @@ export default {
           const uniqueUsers = new Set();
           const uniqueBranches = new Set();
 
-          contracts.value = data.договоры.map(contract => {
-            if (contract?.Пользователь) uniqueUsers.add(contract.Пользователь.trim());
-            if (contract?.Филиал) uniqueBranches.add(contract.Филиал.trim());
+          contracts.value = data.договоры.map((c) => {
+            if (c?.Пользователь) uniqueUsers.add(c.Пользователь.trim());
+            if (c?.Филиал) uniqueBranches.add(c.Филиал.trim());
             return {
-              ...contract,
-              Дата_Подписания: formatDate(contract.Дата_Подписания),
-              Пользователь: contract.Пользователь ? contract.Пользователь.trim() : 'Не указан',
-              Филиал: contract.Филиал ? contract.Филиал.trim() : 'Не указан'
+              ...c,
+              Дата_Подписания: formatDate(c.Дата_Подписания),
+              Пользователь: c.Пользователь ? c.Пользователь.trim() : 'Не указан',
+              Филиал: c.Филиал ? c.Филиал.trim() : 'Не указан'
             };
           });
 
@@ -181,9 +157,9 @@ export default {
           errorDetails.value = 'Проверьте доступность сервера и сетевое соединение';
         } else if (err.code === 'ECONNABORTED') {
           error.value = 'Таймаут загрузки списка договоров';
-          errorDetails.value = 'Сервер не ответил за установленное время.';
+          errorDetails.value = 'Сервер не ответил за установленное время';
         } else {
-          error.value = 'Не удалось загрузить список договоров.';
+          error.value = 'Не удалось загрузить список договоров';
           errorDetails.value = err.message;
         }
       } finally {
@@ -191,84 +167,46 @@ export default {
       }
     };
 
-    const handleContractAdded = async (createdNumber) => {
+    const handleContractAdded = async (created) => {
       showAddModal.value = false;
       await fetchContracts();
-      if (createdNumber) {
+
+      const num =
+        created?.договор?.Номер_Договора ??
+        created?.договор?.Номер ??
+        created?.Номер_Договора ??
+        created?.Номер ??
+        '';
+
+      if (num) {
         await nextTick();
+        currentContractNumber.value = String(num);
+        currentContract.value = null;
         isModalVisible.value = true;
-        autoEditMode.value = true;
-        fetchContractDetails(createdNumber);
       }
     };
 
-    const fetchContractDetails = async (contractNumber) => {
-      if (!contractNumber) {
-        modalError.value = "Не передан номер договора";
-        return;
-      }
-      modalLoading.value = true;
-      modalError.value = null;
-      modalErrorDetails.value = null;
-      modalContractDetailsRaw.value = null;
-      currentContractNumber.value = contractNumber;
-
-      try {
-        const { data, status } = await http.get('/RCDO/hs/rcdo/Dogovor', { params: { nomer: contractNumber } });
-        if (status === 200 && data && typeof data.договор === 'object') {
-          modalContractDetailsRaw.value = data;
-        } else {
-          throw new Error(`Некорректный формат данных в ответе сервера (детали договора). Статус: ${status}`);
-        }
-      } catch (err) {
-        modalContractDetailsRaw.value = null;
-        if (err.response) {
-          modalError.value = `Ошибка сервера: ${err.response.status}`;
-          modalErrorDetails.value = `Сервер вернул: ${JSON.stringify(err.response.data)}`;
-        } else if (err.request) {
-          modalError.value = 'Сервер деталей договора не отвечает';
-          modalErrorDetails.value = 'Проверьте доступность сервера 1С по IP-адресу и сетевое соединение. Возможна проблема CORS.';
-        } else if (err.code === 'ECONNABORTED') {
-          modalError.value = 'Таймаут загрузки деталей договора';
-          modalErrorDetails.value = 'Сервер не ответил за установленное время.';
-        } else {
-          modalError.value = 'Не удалось загрузить детали договора.';
-          modalErrorDetails.value = err.message;
-        }
-      } finally {
-        modalLoading.value = false;
-      }
-    };
-
-    const handleOpenContractModal = (contractRow) => {
-      if (contractRow && contractRow.Номер_Договора) {
+    const handleOpenContractModal = (row) => {
+      if (row && row.Номер_Договора) {
+        currentContract.value = row;
+        currentContractNumber.value = String(row.Номер_Договора);
         isModalVisible.value = true;
-        autoEditMode.value = false;
-        fetchContractDetails(contractRow.Номер_Договора);
       } else {
-        alert("Ошибка: Не удалось определить номер договора для открытия деталей.");
+        alert('Ошибка: не удалось определить номер договора.');
       }
     };
 
     const closeModal = () => {
       isModalVisible.value = false;
-      modalLoading.value = false;
-      modalError.value = null;
-      modalErrorDetails.value = null;
-      modalContractDetailsRaw.value = null;
       currentContractNumber.value = null;
-      autoEditMode.value = false;
-    };
-
-    const retryFetchContractDetails = () => {
-      if (currentContractNumber.value) fetchContractDetails(currentContractNumber.value);
+      currentContract.value = null;
     };
 
     const filteredContracts = computed(() => {
-      return contracts.value.filter(contract => {
-        const passUserFilter = selectedUser.value === 'Все' || contract.Пользователь === selectedUser.value;
-        const passBranchFilter = selectedBranch.value === 'Все' || contract.Филиал === selectedBranch.value;
-        return passUserFilter && passBranchFilter;
+      return contracts.value.filter((c) => {
+        const okUser = selectedUser.value === 'Все' || c.Пользователь === selectedUser.value;
+        const okBranch = selectedBranch.value === 'Все' || c.Филиал === selectedBranch.value;
+        return okUser && okBranch;
       });
     });
 
@@ -277,45 +215,38 @@ export default {
     const onSortChanged = () => {};
 
     return {
-      columns, contracts, loading, error, errorDetails, fetchContracts, onSortChanged,
-      selectedUser, usersList, selectedBranch, branchesList, filteredContracts,
-      showAddModal, handleContractAdded,
-      isModalVisible, modalLoading, modalError, modalErrorDetails, modalContractData, modalContractDetailsRaw,
-      handleOpenContractModal, closeModal, retryFetchContractDetails,
-      formatDate, formatDateTime, formatCurrency, autoEditMode, detailsModalRef
+      // state
+      columns, contracts, loading, error, errorDetails,
+      selectedUser, usersList, selectedBranch, branchesList,
+      showAddModal,
+
+      // computed
+      filteredContracts,
+
+      // modal
+      isModalVisible, currentContractNumber, currentContract,
+
+      // methods
+      fetchContracts, handleContractAdded, handleOpenContractModal, closeModal, onSortChanged
     };
   }
-}
+};
 </script>
 
 <style scoped>
-/* стили — те же */
 .add-btn { background:#2196f3; color:#fff; border:none; padding:8px 18px; border-radius:4px; font-size:15px; cursor:pointer; margin-bottom:18px; transition:background .17s }
 .add-btn:hover { background:#167ee6 }
-.modal-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background-color:rgba(0,0,0,.6); display:flex; justify-content:center; align-items:center; z-index:1000; padding:20px; box-sizing:border-box }
-.modal-content { background:#fff; padding:25px 30px; border-radius:8px; box-shadow:0 5px 15px rgba(0,0,0,.2); position:relative; max-width:800px; width:90%; max-height:90vh; overflow-y:auto }
-.modal-close-button { position:absolute; top:10px; right:15px; background:none; border:none; font-size:28px; line-height:1; cursor:pointer; color:#888; padding:0 }
-.modal-close-button:hover { color:#333 }
-.modal-content h3 { margin-top:0; margin-bottom:20px; color:#333; border-bottom:1px solid #eee; padding-bottom:10px }
-.contract-details p { margin:8px 0; line-height:1.6 }
-.contract-details strong { color:#555 }
-.contract-details h4 { margin-top:25px; margin-bottom:10px; color:#333; border-bottom:1px solid #eee; padding-bottom:5px }
-.equipment-list table { width:100%; border-collapse:collapse; margin-top:10px }
-.equipment-list th, .equipment-list td { border:1px solid #ddd; padding:8px 10px; text-align:left; font-size:14px }
-.equipment-list th { background:#f8f9fa; font-weight:700 }
-.equipment-list tbody tr:nth-child(even) { background:#f9f9f9 }
-.equipment-list tfoot td { border-top:2px solid #ccc }
-.modal-loading { margin:30px 0; text-align:center }
-.modal-error { margin:20px 0 }
-.modal-error .retry-button { margin-top:10px }
+
 .error-container { margin:20px 0; padding:15px; background:#fff8f8; border-left:4px solid #ff5252; border-radius:4px }
 .error-message { color:#d32f2f; margin-bottom:8px; font-weight:700 }
 .error-details { color:#666; font-size:.9em; margin-bottom:15px }
 .retry-button { background-color:#2196f3; color:#fff; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; font-weight:700 }
 .retry-button:hover { background-color:#0d8aee }
+
 .loading-indicator { display:flex; align-items:center; margin:20px 0 }
 .spinner { display:inline-block; width:20px; height:20px; margin-right:10px; border:3px solid rgba(0,0,0,.1); border-radius:50%; border-top-color:#2196f3; animation:spin 1s ease-in-out infinite }
 @keyframes spin { to { transform: rotate(360deg) } }
+
 .filters-group { display:flex; flex-wrap:wrap; gap:15px; margin-bottom:20px }
 .filter-container { padding:10px; background:#e9ecef; border-radius:4px; display:flex; align-items:center; gap:10px; flex:1; min-width:250px }
 .filter-container label { font-weight:700; color:#495057; white-space:nowrap }
