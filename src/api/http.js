@@ -2,65 +2,57 @@
 import axios from 'axios';
 
 const http = axios.create({
-  baseURL:
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) ||
-    process.env.VUE_APP_API_BASE_URL ||
-    '/api',
+  baseURL: '/api',
   timeout: 45000,
-  withCredentials: false,
 });
 
-/** Безопасно читаем токен из localStorage */
-function readToken() {
+function readUser() {
   try {
-    const raw = localStorage.getItem('user');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed?.token || null;
-  } catch (e) {
+    return JSON.parse(localStorage.getItem('user') || 'null');
+  } catch {
     return null;
   }
 }
 
-/** REQUEST: подставляем заголовки и токен */
-http.interceptors.request.use(
-  (cfg) => {
-    const token = readToken();
+function readToken() {
+  return readUser()?.token || null;
+}
 
-    // Базовые заголовки
-    cfg.headers = { Accept: 'application/json', ...(cfg.headers || {}) };
+http.interceptors.request.use((cfg) => {
+  const token = readToken();
 
-    // Для JSON-запросов (POST/PUT/PATCH) ставим Content-Type если он не задан
-    const method = (cfg.method || 'get').toLowerCase();
-    if (['post', 'put', 'patch'].includes(method) && cfg.data && !cfg.headers['Content-Type']) {
-      cfg.headers['Content-Type'] = 'application/json';
-    }
+  // Базовые заголовки
+  cfg.headers = {
+    Accept: 'application/json',
+    ...(cfg.headers || {}),
+  };
 
-    // Авторизация: Bearer + дубли под 1С
-    if (token && !cfg.headers.Authorization) {
-      cfg.headers.Authorization = `Bearer ${token}`;
-      cfg.headers.Token = cfg.headers.Token || token;
-      cfg.headers['X-Auth-Token'] = cfg.headers['X-Auth-Token'] || token;
-    }
-
-    return cfg;
-  },
-  (error) => Promise.reject(error)
-);
-
-/** RESPONSE: нормализуем ошибки */
-http.interceptors.response.use(
-  (resp) => resp,
-  (error) => {
-    if (error?.response?.status === 401) {
-      // при необходимости можно разлогинить:
-      // localStorage.removeItem('user');
-    }
-
-    // Возвращаем полезное тело ошибки, если есть
-    const payload = error?.response?.data ?? { message: error?.message || 'Network error' };
-    return Promise.reject(payload);
+  // Если уже есть Authorization (например, Basic) — не трогаем
+  if (token && !cfg.headers.Authorization) {
+    cfg.headers.Authorization = `Bearer ${token}`;
   }
-);
+
+  // Доп. каналы передачи токена для 1С
+  if (token) {
+    cfg.headers.Token = cfg.headers.Token || token;
+    cfg.headers['X-Auth-Token'] = cfg.headers['X-Auth-Token'] || token;
+  }
+
+  const user = readUser();
+  const login = user?.login || user?.Логин || '';
+  const url = String(cfg.url || '');
+
+  // Для RightsMe: и заголовок, и тело (на случай если прокси режет заголовки)
+  if (/rightsme/i.test(url) || /rights-me/i.test(url)) {
+    if (login) {
+      cfg.headers['X-User'] = login;
+      cfg.data = { ...(cfg.data || {}), login }; // <-- ключевая строка
+    }
+    // гарантируем метод POST
+    if (!cfg.method) cfg.method = 'post';
+  }
+
+  return cfg;
+});
 
 export default http;

@@ -6,8 +6,10 @@
 
     <AddContractModal
       v-if="showAddModal"
-      :usersList="usersList"
-      :branchesList="branchesList"
+      :usersList="filterUsersList"
+      :branchesList="contractFormBranches"
+      :lock-to-branch="!canEditOtherFilialData"
+      :user-branch="userFilial"
       @close="showAddModal = false"
       @contract-added="handleContractAdded"
     />
@@ -18,24 +20,26 @@
 
     <div v-if="error" class="error-container">
       <p class="error-message">{{ error }}</p>
-      <p class="error-details" v-if="errorDetails">
-        Техническая информация: {{ errorDetails }}
-      </p>
+      <p class="error-details" v-if="errorDetails">Техническая информация: {{ errorDetails }}</p>
       <button @click="fetchContracts" class="retry-button">Попробовать снова</button>
     </div>
 
     <div class="filters-group" v-if="!loading && !error && contracts.length > 0">
-      <div class="filter-container" v-if="usersList.length > 1">
+      <div class="filter-container" v-if="filterUsersList.length > 1">
         <label for="user-filter">Фильтр по пользователю:</label>
         <select id="user-filter" v-model="selectedUser">
-          <option v-for="user in usersList" :key="user" :value="user">{{ user }}</option>
+          <option v-for="user in filterUsersList" :key="user" :value="user">{{ user }}</option>
         </select>
       </div>
 
-      <div class="filter-container" v-if="branchesList.length > 1">
+      <div class="filter-container" v-if="filterBranchesList.length > 0">
         <label for="branch-filter">Фильтр по филиалу:</label>
-        <select id="branch-filter" v-model="selectedBranch">
-          <option v-for="branch in branchesList" :key="branch" :value="branch">{{ branch }}</option>
+        <select
+          id="branch-filter"
+          v-model="selectedBranch"
+          :disabled="!canEditOtherFilialData"
+        >
+          <option v-for="branch in filterBranchesList" :key="branch" :value="branch">{{ branch }}</option>
         </select>
       </div>
     </div>
@@ -51,20 +55,60 @@
     />
 
     <ContractDetailsModal
-      :show="isModalVisible"
-      :contract="currentContract"
-      :nomer="currentContractNumber"
+      :visible="isModalVisible"
+      :loading="modalLoading"
+      :error="modalError"
+      :errorDetails="modalErrorDetails"
+      :contractData="modalContractData"
+      :contractRaw="modalContractRaw"
+      :formatDate="formatDate"
+      :formatDateTime="formatDateTime"
+      :formatCurrency="formatCurrency"
+      :autoEdit="autoEdit"
+      @retry="retryFetchContractDetails"
       @close="closeModal"
     />
   </div>
 </template>
 
 <script>
-import { ref, onMounted, computed, nextTick } from 'vue';
-import DataTableRed from '@/components/shared/DataTableRed.vue';           // ✅ правильный путь
-import ContractDetailsModal from './ContractDetailsModal.vue';      // относительный импорт
-import AddContractModal from './AddContractModal.vue';              // относительный импорт
-import http from '@/api/http';
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import http from '@/api/http'
+import DataTableRed from '@/components/shared/DataTableRed.vue'
+import ContractDetailsModal from './ContractDetailsModal.vue'
+import AddContractModal from './AddContractModal.vue'
+
+function readRights() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null')
+    return (u && u.rights) ? u.rights : {}
+  } catch {
+    return {}
+  }
+}
+
+function readUserFilial() {
+  const direct = localStorage.getItem('filial')
+    || localStorage.getItem('Филиал')
+    || localStorage.getItem('branch')
+
+  if (direct && direct.trim()) return direct.trim()
+
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null')
+    const cand =
+      u?.filial ?? u?.Филиал ?? u?.branch ?? u?.Branch ?? u?.profile?.filial ?? u?.profile?.Филиал
+    if (typeof cand === 'string' && cand.trim()) return cand.trim()
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+function normalizeBranchName(v) {
+  return typeof v === 'string' ? v.trim() : ''
+}
 
 export default {
   name: 'TableContracts',
@@ -78,159 +122,345 @@ export default {
       { key: 'ФИО', label: 'ФИО ученика' },
       { key: 'Филиал', label: 'Филиал' },
       { key: 'actions', label: 'Действия' }
-    ]);
+    ])
 
-    const contracts = ref([]);
-    const loading = ref(true);
-    const error = ref(null);
-    const errorDetails = ref(null);
+    const contracts = ref([])
+    const loading = ref(true)
+    const error = ref(null)
+    const errorDetails = ref(null)
 
-    const selectedUser = ref('Все');
-    const usersList = ref(['Все']);
-    const selectedBranch = ref('Все');
-    const branchesList = ref(['Все']);
+    const selectedUser = ref('Все')
+    const usersList = ref(['Все'])
+    const selectedBranch = ref('Все')
+    const branchesList = ref(['Все'])
 
-    const showAddModal = ref(false);
+    const showAddModal = ref(false)
 
-    const isModalVisible = ref(false);
-    const currentContractNumber = ref(null);
-    const currentContract = ref(null);
+    const isModalVisible = ref(false)
+    const modalLoading = ref(false)
+    const modalError = ref('')
+    const modalErrorDetails = ref('')
+    const modalContractRaw = ref(null)
+    const modalContractData = computed(() => modalContractRaw.value?.договор || null)
+    const autoEdit = ref(false)
+    const currentContractNumber = ref(null)
+
+    const rights = ref(readRights())
+    const userFilial = ref(normalizeBranchName(readUserFilial()))
+    const canEditOtherFilialData = computed(() => !!rights.value['РедактированиеДанныхЧужогоФилиала'])
+
+    const refreshAuthContext = () => {
+      rights.value = readRights()
+      userFilial.value = normalizeBranchName(readUserFilial())
+    }
 
     const formatDate = (dateStr) => {
-      if (!dateStr || dateStr === '0001-01-01T00:00:00' || dateStr === '0001-01-01') return 'Не указана';
+      if (!dateStr || dateStr === '0001-01-01T00:00:00' || dateStr === '0001-01-01') return 'Не указана'
       try {
-        const d = new Date(dateStr);
+        const d = new Date(dateStr)
         if (isNaN(d.getTime())) {
-          const parts = dateStr.split('.');
+          const parts = String(dateStr).split('.')
           if (parts.length === 3) {
-            const iso = `${parts[2]}-${parts[1]}-${parts[0]}`;
-            const parsed = new Date(iso);
-            return isNaN(parsed.getTime()) ? dateStr : parsed.toLocaleDateString('ru-RU');
+            const iso = `${parts[2]}-${parts[1]}-${parts[0]}`
+            const parsed = new Date(iso)
+            return isNaN(parsed.getTime()) ? dateStr : parsed.toLocaleDateString('ru-RU')
           }
-          return dateStr;
+          return dateStr
         }
-        return d.toLocaleDateString('ru-RU');
+        return d.toLocaleDateString('ru-RU')
       } catch {
-        return dateStr;
+        return dateStr
       }
-    };
+    }
+
+    const formatDateTime = (s) => {
+      if (!s) return '—'
+      const d = new Date(s)
+      return isNaN(d.getTime()) ? String(s) : d.toLocaleString('ru-RU')
+    }
+
+    const formatCurrency = (v) => {
+      const n = Number(v ?? 0)
+      try {
+        return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(n)
+      } catch {
+        return `${n.toFixed(2)} ₽`
+      }
+    }
+
+    const filterBranchesList = computed(() => {
+      if (!canEditOtherFilialData.value && userFilial.value) {
+        return [userFilial.value]
+      }
+      return branchesList.value
+    })
+
+    const contractFormBranches = computed(() => {
+      if (!canEditOtherFilialData.value && userFilial.value) {
+        return [userFilial.value]
+      }
+      return branchesList.value.filter(branch => branch && branch !== 'Все')
+    })
+
+    const activeBranchFilter = computed(() => {
+      if (!canEditOtherFilialData.value) {
+        return userFilial.value || 'Все'
+      }
+      return (selectedBranch.value || '').trim() || 'Все'
+    })
+
+    const filterUsersList = computed(() => {
+      const userSet = new Set()
+
+      for (const c of contracts.value) {
+        const branch = normalizeBranchName(c?.Филиал)
+        const userName = c?.Пользователь ? String(c.Пользователь).trim() : ''
+
+        if (!userName) continue
+        if (activeBranchFilter.value !== 'Все' && branch !== activeBranchFilter.value) continue
+
+        userSet.add(userName)
+      }
+
+      return ['Все', ...Array.from(userSet).sort((a, b) => a.localeCompare(b, 'ru'))]
+    })
+
+    const applyDefaultBranch = () => {
+      const own = normalizeBranchName(userFilial.value || readUserFilial())
+
+      if (!canEditOtherFilialData.value) {
+        selectedBranch.value = own || 'Все'
+        return
+      }
+
+      if (own && branchesList.value.includes(own)) {
+        selectedBranch.value = own
+        return
+      }
+
+      if (!selectedBranch.value || !branchesList.value.includes(selectedBranch.value)) {
+        selectedBranch.value = 'Все'
+      }
+    }
+
+    watch(selectedBranch, (newVal) => {
+      if (!canEditOtherFilialData.value) {
+        const forced = userFilial.value || 'Все'
+        if (newVal !== forced) {
+          selectedBranch.value = forced
+        }
+      }
+    })
+
+    watch(filterUsersList, (list) => {
+      if (!list.includes(selectedUser.value)) {
+        selectedUser.value = 'Все'
+      }
+    }, { deep: true })
+
+    function onAuthRelatedChange() {
+      refreshAuthContext()
+      applyDefaultBranch()
+    }
 
     const fetchContracts = async () => {
       try {
-        loading.value = true;
-        error.value = null;
-        errorDetails.value = null;
+        loading.value = true
+        error.value = null
+        errorDetails.value = null
 
-        contracts.value = [];
-        usersList.value = ['Все'];
-        branchesList.value = ['Все'];
-        selectedUser.value = 'Все';
-        selectedBranch.value = 'Все';
+        contracts.value = []
+        usersList.value = ['Все']
+        branchesList.value = ['Все']
+        selectedUser.value = 'Все'
+        selectedBranch.value = 'Все'
 
-        const { data } = await http.get('/RCDO/hs/rcdo/ucenicidogovora');
+        const { data } = await http.get('/RCDO/hs/rcdo/ucenicidogovora')
         if (data && Array.isArray(data.договоры)) {
-          const uniqueUsers = new Set();
-          const uniqueBranches = new Set();
+          const uniqueUsers = new Set()
+          const uniqueBranches = new Set()
 
           contracts.value = data.договоры.map((c) => {
-            if (c?.Пользователь) uniqueUsers.add(c.Пользователь.trim());
-            if (c?.Филиал) uniqueBranches.add(c.Филиал.trim());
+            const userName = c.Пользователь ? String(c.Пользователь).trim() : 'Не указан'
+            const branchName = c.Филиал ? String(c.Филиал).trim() : 'Не указан'
+
+            if (c?.Пользователь) uniqueUsers.add(userName)
+            if (c?.Филиал) uniqueBranches.add(branchName)
+
             return {
               ...c,
               Дата_Подписания: formatDate(c.Дата_Подписания),
-              Пользователь: c.Пользователь ? c.Пользователь.trim() : 'Не указан',
-              Филиал: c.Филиал ? c.Филиал.trim() : 'Не указан'
-            };
-          });
+              Пользователь: userName,
+              Филиал: branchName
+            }
+          })
 
-          usersList.value = ['Все', ...Array.from(uniqueUsers).sort()];
-          branchesList.value = ['Все', ...Array.from(uniqueBranches).sort()];
+          usersList.value = ['Все', ...Array.from(uniqueUsers).sort((a, b) => a.localeCompare(b, 'ru'))]
+          branchesList.value = ['Все', ...Array.from(uniqueBranches).sort((a, b) => a.localeCompare(b, 'ru'))]
+
+          applyDefaultBranch()
         } else {
-          throw new Error('Некорректный формат данных в ответе сервера (список договоров)');
+          throw new Error('Некорректный формат данных в ответе сервера (список договоров)')
         }
       } catch (err) {
         if (err.response) {
-          error.value = `Ошибка сервера: ${err.response.status}`;
-          errorDetails.value = `Сервер вернул: ${JSON.stringify(err.response.data)}`;
+          error.value = `Ошибка сервера: ${err.response.status}`
+          errorDetails.value = `Сервер вернул: ${JSON.stringify(err.response.data)}`
         } else if (err.request) {
-          error.value = 'Сервер списка договоров не отвечает';
-          errorDetails.value = 'Проверьте доступность сервера и сетевое соединение';
+          error.value = 'Сервер списка договоров не отвечает'
+          errorDetails.value = 'Проверьте доступность сервера и сетевое соединение'
         } else if (err.code === 'ECONNABORTED') {
-          error.value = 'Таймаут загрузки списка договоров';
-          errorDetails.value = 'Сервер не ответил за установленное время';
+          error.value = 'Таймаут загрузки списка договоров'
+          errorDetails.value = 'Сервер не ответил за установленное время'
         } else {
-          error.value = 'Не удалось загрузить список договоров';
-          errorDetails.value = err.message;
+          error.value = 'Не удалось загрузить список договоров'
+          errorDetails.value = err.message
         }
       } finally {
-        loading.value = false;
+        loading.value = false
       }
-    };
+    }
 
-    const handleContractAdded = async (created) => {
-      showAddModal.value = false;
-      await fetchContracts();
+    async function tryFetchDetails(endpoint, nomer) {
+      return http.get(endpoint, { params: { nomer } })
+    }
 
-      const num =
-        created?.договор?.Номер_Договора ??
-        created?.договор?.Номер ??
-        created?.Номер_Договора ??
-        created?.Номер ??
-        '';
+    const fetchContractDetails = async (nomer) => {
+      if (!nomer && nomer !== 0) return
 
-      if (num) {
-        await nextTick();
-        currentContractNumber.value = String(num);
-        currentContract.value = null;
-        isModalVisible.value = true;
+      isModalVisible.value = true
+      modalLoading.value = true
+      modalError.value = ''
+      modalErrorDetails.value = ''
+      modalContractRaw.value = null
+      currentContractNumber.value = nomer
+
+      try {
+        let resp = await tryFetchDetails('/RCDO/hs/rcdo/Dogovor', nomer).catch(() => null)
+
+        if (!(resp?.status === 200 && resp?.data?.договор)) {
+          resp = await tryFetchDetails('/RCDO/hs/rcdo/URLUD_DogovorPoNomeru', nomer)
+        }
+
+        const { data, status } = resp
+        if (status === 200 && data && typeof data.договор === 'object') {
+          modalContractRaw.value = data
+        } else {
+          throw new Error(`Некорректный формат данных (детали договора). Статус: ${status}`)
+        }
+      } catch (err) {
+        modalContractRaw.value = null
+        if (err.response) {
+          modalError.value = `Ошибка сервера: ${err.response.status}`
+          modalErrorDetails.value = `Сервер вернул: ${JSON.stringify(err.response.data)}`
+        } else if (err.request) {
+          modalError.value = 'Сервер деталей договора не отвечает'
+          modalErrorDetails.value = 'Проверьте доступность 1С/прокси и CORS.'
+        } else if (err.code === 'ECONNABORTED') {
+          modalError.value = 'Таймаут загрузки деталей договора'
+          modalErrorDetails.value = 'Сервер не ответил за установленное время'
+        } else {
+          modalError.value = 'Не удалось загрузить детали договора'
+          modalErrorDetails.value = err.message
+        }
+      } finally {
+        modalLoading.value = false
       }
-    };
+    }
 
-    const handleOpenContractModal = (row) => {
-      if (row && row.Номер_Договора) {
-        currentContract.value = row;
-        currentContractNumber.value = String(row.Номер_Договора);
-        isModalVisible.value = true;
-      } else {
-        alert('Ошибка: не удалось определить номер договора.');
+    const handleOpenContractModal = (payload) => {
+      const row = payload?.row || payload
+      const num = row?.Номер_Договора ?? row?.Номер
+      if (!num) {
+        alert('Ошибка: не удалось определить номер договора.')
+        return
       }
-    };
+      autoEdit.value = false
+      fetchContractDetails(num)
+    }
+
+    const retryFetchContractDetails = () => {
+      if (currentContractNumber.value != null) {
+        fetchContractDetails(currentContractNumber.value)
+      }
+    }
 
     const closeModal = () => {
-      isModalVisible.value = false;
-      currentContractNumber.value = null;
-      currentContract.value = null;
-    };
+      isModalVisible.value = false
+      modalLoading.value = false
+      modalError.value = ''
+      modalErrorDetails.value = ''
+      modalContractRaw.value = null
+      autoEdit.value = false
+    }
+
+    const handleContractAdded = async (createdNumber) => {
+      showAddModal.value = false
+      await fetchContracts()
+      if (createdNumber != null) {
+        autoEdit.value = true
+        fetchContractDetails(createdNumber)
+      }
+    }
 
     const filteredContracts = computed(() => {
       return contracts.value.filter((c) => {
-        const okUser = selectedUser.value === 'Все' || c.Пользователь === selectedUser.value;
-        const okBranch = selectedBranch.value === 'Все' || c.Филиал === selectedBranch.value;
-        return okUser && okBranch;
-      });
-    });
+        const okUser = selectedUser.value === 'Все' || c.Пользователь === selectedUser.value
+        const okBranch = activeBranchFilter.value === 'Все' || c.Филиал === activeBranchFilter.value
+        return okUser && okBranch
+      })
+    })
 
-    onMounted(fetchContracts);
+    onMounted(() => {
+      refreshAuthContext()
+      fetchContracts()
+      window.addEventListener('auth-changed', onAuthRelatedChange)
+      window.addEventListener('storage', onAuthRelatedChange)
+    })
 
-    const onSortChanged = () => {};
+    onBeforeUnmount(() => {
+      window.removeEventListener('auth-changed', onAuthRelatedChange)
+      window.removeEventListener('storage', onAuthRelatedChange)
+    })
+
+    const onSortChanged = (evt) => { void evt }
 
     return {
-      // state
-      columns, contracts, loading, error, errorDetails,
-      selectedUser, usersList, selectedBranch, branchesList,
-      showAddModal,
-
-      // computed
+      columns,
+      contracts,
+      loading,
+      error,
+      errorDetails,
+      selectedUser,
+      usersList,
+      filterUsersList,
+      selectedBranch,
+      branchesList,
+      filterBranchesList,
+      contractFormBranches,
       filteredContracts,
-
-      // modal
-      isModalVisible, currentContractNumber, currentContract,
-
-      // methods
-      fetchContracts, handleContractAdded, handleOpenContractModal, closeModal, onSortChanged
-    };
+      fetchContracts,
+      showAddModal,
+      handleContractAdded,
+      isModalVisible,
+      modalLoading,
+      modalError,
+      modalErrorDetails,
+      modalContractRaw,
+      modalContractData,
+      autoEdit,
+      handleOpenContractModal,
+      retryFetchContractDetails,
+      closeModal,
+      formatDate,
+      formatDateTime,
+      formatCurrency,
+      onSortChanged,
+      canEditOtherFilialData,
+      userFilial
+    }
   }
-};
+}
 </script>
 
 <style scoped>

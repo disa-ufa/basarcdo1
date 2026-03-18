@@ -9,34 +9,46 @@
           <label for="s_surname">Фамилия:</label>
           <input id="s_surname" v-model="surname" required />
         </div>
+
         <div class="form-row">
           <label for="s_name">Имя:</label>
           <input id="s_name" v-model="name" required />
         </div>
+
         <div class="form-row">
           <label for="s_patronymic">Отчество:</label>
           <input id="s_patronymic" v-model="patronymic" required />
         </div>
+
         <div class="form-row">
           <label for="s_date">Дата поступления:</label>
           <input id="s_date" v-model="date" type="date" required />
         </div>
+
         <div class="form-row">
           <label for="s_klass">Класс:</label>
           <input id="s_klass" v-model="klass" required />
         </div>
+
         <div class="form-row">
           <label for="s_order">Приказ о зачислении:</label>
           <input id="s_order" v-model="order" required />
         </div>
+
         <div class="form-row">
           <label for="s_address">Адрес регистрации:</label>
           <input id="s_address" v-model="address" required />
         </div>
+
         <div class="form-row">
           <label for="s_branch">Филиал:</label>
-          <select id="s_branch" v-model="branch" required>
-            <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
+          <select
+            id="s_branch"
+            v-model="branch"
+            :disabled="lockToBranch || saving"
+            required
+          >
+            <option v-for="b in availableBranches" :key="b" :value="b">{{ b }}</option>
           </select>
         </div>
 
@@ -52,33 +64,93 @@
 </template>
 
 <script>
-import http from '@/api/http';
+import http from '@/api/http'
+
 export default {
-  props: { branches: { type: Array, required: true } },
+  props: {
+    branches: { type: Array, required: true },
+    lockToBranch: { type: Boolean, default: false },
+    userBranch: { type: String, default: '' }
+  },
   emits: ['close', 'student-added'],
   data() {
     return {
-      surname: '', name: '', patronymic: '',
-      date: '', klass: '', order: '', address: '',
-      branch: '', // выберем ниже через watch(immediate)
-      error: '', saving: false,
-    };
+      surname: '',
+      name: '',
+      patronymic: '',
+      date: '',
+      klass: '',
+      order: '',
+      address: '',
+      branch: '',
+      error: '',
+      saving: false
+    }
+  },
+  computed: {
+    availableBranches() {
+      const cleaned = []
+      const seen = new Set()
+
+      for (const item of this.branches || []) {
+        const name = this.normalizeBranch(item)
+        if (!name || name === 'Все' || seen.has(name)) continue
+        seen.add(name)
+        cleaned.push(name)
+      }
+
+      if (this.lockToBranch) {
+        const own = this.normalizeBranch(this.userBranch)
+        if (own) return [own]
+      }
+
+      return cleaned
+    }
   },
   watch: {
-    // как только придёт список филиалов, выбрать первый НЕ "Все"
     branches: {
       immediate: true,
-      handler (arr) {
-        const firstValid = (arr || []).find(b => b && b !== 'Все') || (arr && arr[0]) || ''
-        if (!this.branch && firstValid) this.branch = firstValid
+      handler() {
+        this.applyBranchRules()
       }
+    },
+    userBranch() {
+      this.applyBranchRules()
+    },
+    lockToBranch() {
+      this.applyBranchRules()
     }
   },
   methods: {
+    normalizeBranch(v) {
+      return typeof v === 'string' ? v.trim() : ''
+    },
+    applyBranchRules() {
+      const list = this.availableBranches || []
+
+      if (!list.length) {
+        this.branch = ''
+        return
+      }
+
+      if (this.lockToBranch) {
+        this.branch = list[0]
+        return
+      }
+
+      if (!this.branch || !list.includes(this.branch)) {
+        this.branch = list[0]
+      }
+    },
     async addStudent() {
-      this.error = '';
-      this.saving = true;
-      const fio = [this.surname, this.name, this.patronymic].filter(Boolean).join(' ');
+      this.error = ''
+      this.saving = true
+
+      const fio = [this.surname, this.name, this.patronymic].filter(Boolean).join(' ')
+      const filialToSave = this.lockToBranch
+        ? (this.availableBranches[0] || this.normalizeBranch(this.userBranch))
+        : this.branch
+
       const payload = {
         Фамилия: this.surname,
         Имя: this.name,
@@ -88,26 +160,27 @@ export default {
         Класс: this.klass,
         Приказ_О_Зачислении: this.order,
         Адрес_Регистрации: this.address,
-        Филиал: this.branch,
+        Филиал: filialToSave,
         Обучение_Статус: true
-      };
+      }
+
       try {
-        await http.post('/RCDO/hs/rcdo/add_ucenic', payload);
-        this.$emit('student-added');
+        await http.post('/RCDO/hs/rcdo/add_ucenic', payload)
+        this.$emit('student-added')
       } catch (e) {
-        const s = e?.response?.status;
-        const d = e?.response?.data;
-        this.error = `Ошибка при добавлении ученика: ${s || ''} ${typeof d === 'string' ? d : (d?.error || d?.message || e.message)}`.trim();
+        const s = e?.response?.status
+        const d = e?.response?.data
+        this.error = `Ошибка при добавлении ученика: ${s || ''} ${typeof d === 'string' ? d : (d?.error || d?.message || e.message)}`.trim()
       } finally {
-        this.saving = false;
+        this.saving = false
       }
     }
   }
-};
+}
 </script>
 
 <style scoped>
-.modal-backdrop{position:fixed;z-index:9999;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.12);display:flex;justify-content:flex-end;align-items:stretch} 
+.modal-backdrop{position:fixed;z-index:9999;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.12);display:flex;justify-content:flex-end;align-items:stretch}
 .modal-window{background:#fff;width:400px;max-width:100vw;height:100%;box-shadow:-2px 0 24px rgba(0,0,0,.13);position:relative;padding:36px 28px 20px;animation:slideInPanel .35s cubic-bezier(.33,.9,.56,1.02);overflow-y:auto}
 .close-btn{position:absolute;right:16px;top:12px;font-size:22px;background:none;border:none;color:#888;cursor:pointer}
 .form-row{margin-bottom:16px;display:flex;flex-direction:column}

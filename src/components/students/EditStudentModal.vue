@@ -3,6 +3,7 @@
     <div class="modal-window">
       <button class="close-btn" @click="$emit('close')">×</button>
       <h3>Редактировать ученика</h3>
+
       <form @submit.prevent="saveStudent">
         <div class="form-row"><label>Фамилия:</label><input v-model="surname" required /></div>
         <div class="form-row"><label>Имя:</label><input v-model="name" required /></div>
@@ -11,12 +12,18 @@
         <div class="form-row"><label>Класс:</label><input v-model="klass" required /></div>
         <div class="form-row"><label>Приказ о зачислении:</label><input v-model="order" required /></div>
         <div class="form-row"><label>Адрес регистрации:</label><input v-model="address" required /></div>
+
         <div class="form-row">
           <label>Филиал:</label>
-          <select v-model="branch" required>
-            <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
+          <select
+            v-model="branch"
+            :disabled="lockToBranch || saving"
+            required
+          >
+            <option v-for="b in availableBranches" :key="b" :value="b">{{ b }}</option>
           </select>
         </div>
+
         <div class="form-row">
           <label>Статус обучения:</label>
           <select v-model="activeStatus" required>
@@ -24,11 +31,14 @@
             <option :value="false">Не активен</option>
           </select>
         </div>
+
         <div class="form-row" v-if="activeStatus === false">
           <label>Приказ об отчислении:</label>
           <input v-model="orderOut" required />
         </div>
+
         <div v-if="error" class="error-msg">{{ error }}</div>
+
         <div class="form-actions">
           <button type="submit" :disabled="saving">{{ saving ? "Сохранение..." : "Сохранить" }}</button>
           <button type="button" @click="$emit('close')" :disabled="saving">Отмена</button>
@@ -46,14 +56,16 @@ function toBool(v) {
   if (v == null) return false
   if (typeof v === 'number') return v !== 0
   const s = String(v).trim().toLowerCase()
-  if (['да','истина','true','1','активен','учится','обучается','yes','y'].includes(s)) return true
+  if (['да', 'истина', 'true', '1', 'активен', 'учится', 'обучается', 'yes', 'y'].includes(s)) return true
   return false
 }
 
 export default {
   props: {
     branches: { type: Array, required: true },
-    student:  { type: Object, required: true }
+    student: { type: Object, required: true },
+    lockToBranch: { type: Boolean, default: false },
+    userBranch: { type: String, default: '' }
   },
   emits: ['close', 'student-updated'],
   data() {
@@ -66,13 +78,67 @@ export default {
       order: this.student.Приказ_О_Зачислении,
       orderOut: this.student.Приказ_Об_Отчислении || '',
       address: this.student.Адрес_Регистрации,
-      branch: this.student.Филиал,
+      branch: this.normalizeBranch(this.student.Филиал),
       activeStatus: toBool(this.student.Обучение_Статус),
       error: '',
       saving: false
     }
   },
+  computed: {
+    availableBranches() {
+      const cleaned = []
+      const seen = new Set()
+
+      for (const item of this.branches || []) {
+        const name = this.normalizeBranch(item)
+        if (!name || name === 'Все' || seen.has(name)) continue
+        seen.add(name)
+        cleaned.push(name)
+      }
+
+      if (this.lockToBranch) {
+        const own = this.normalizeBranch(this.userBranch)
+        if (own) return [own]
+      }
+
+      return cleaned
+    }
+  },
+  watch: {
+    branches: {
+      immediate: true,
+      handler() {
+        this.applyBranchRules()
+      }
+    },
+    userBranch() {
+      this.applyBranchRules()
+    },
+    lockToBranch() {
+      this.applyBranchRules()
+    }
+  },
   methods: {
+    normalizeBranch(v) {
+      return typeof v === 'string' ? v.trim() : ''
+    },
+    applyBranchRules() {
+      const list = this.availableBranches || []
+
+      if (!list.length) {
+        this.branch = ''
+        return
+      }
+
+      if (this.lockToBranch) {
+        this.branch = list[0]
+        return
+      }
+
+      if (!this.branch || !list.includes(this.branch)) {
+        this.branch = list[0]
+      }
+    },
     prepareDate(val) {
       if (!val || val === 'Не указана' || val === '0001-01-01T00:00:00') return ''
       if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.substr(0, 10)
@@ -85,8 +151,13 @@ export default {
     async saveStudent() {
       this.error = ''
       this.saving = true
+
       try {
         const fio = [this.surname, this.name, this.patronymic].filter(Boolean).join(' ')
+        const filialToSave = this.lockToBranch
+          ? (this.availableBranches[0] || this.normalizeBranch(this.userBranch))
+          : this.branch
+
         const payload = {
           Код: this.student.Код,
           Фамилия: this.surname,
@@ -97,10 +168,11 @@ export default {
           Класс: this.klass,
           Приказ_О_Зачислении: this.order,
           Адрес_Регистрации: this.address,
-          Филиал: this.branch,
+          Филиал: filialToSave,
           Обучение_Статус: !!this.activeStatus,
           Приказ_Об_Отчислении: this.activeStatus === false ? this.orderOut : ""
         }
+
         await http.post('/RCDO/hs/rcdo/edit_ucenic', payload)
         this.$emit('student-updated')
       } catch (e) {

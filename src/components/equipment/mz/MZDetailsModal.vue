@@ -3,6 +3,7 @@
     <div class="mz-side-panel">
       <button class="close-btn" @click="$emit('close')">×</button>
       <h3>Детали материального запаса</h3>
+
       <div v-if="mzData">
         <p><b>Наименование МЗ:</b><br> {{ mzData.НаименованиеМЗ || mzData.Наименование }}</p>
         <p><b>Стоимость:</b><br> {{ mzData.СтоимостьПоследняя }}</p>
@@ -11,7 +12,9 @@
         <p><b>Количество всего:</b><br> {{ mzData.Количество }}</p>
         <p><b>Количество в договорах:</b><br> {{ mzData.КолВДоговорах }}</p>
       </div>
+
       <hr>
+
       <h4>Договора</h4>
       <table class="mz-dogovora-table">
         <thead>
@@ -27,7 +30,6 @@
           <tr v-for="(dogovor, idx) in mzData.Договоры" :key="idx">
             <td>{{ dogovor.НомерДоговора || '-' }}</td>
             <td>
-              <!-- отобразим количество или "-" если undefined -->
               {{ (dogovor.Количество !== undefined && dogovor.Количество !== null) ? dogovor.Количество : '-' }}
             </td>
           </tr>
@@ -43,7 +45,7 @@ export default {
     mzData: { type: Object, required: true }
   },
   emits: ['close']
-};
+}
 </script>
 
 <style scoped>

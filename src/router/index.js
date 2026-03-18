@@ -1,22 +1,33 @@
+// src/router/index.js
 import { createRouter, createWebHashHistory } from 'vue-router';
 
 function isAuthed() {
   try {
     const u = JSON.parse(localStorage.getItem('user') || 'null');
     return !!(u && (u.token || u.login || u.fio));
-  } catch (_e) { return false; }
+  } catch (_e) {
+    return false;
+  }
 }
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', name: 'home', component: () => import('@/components/Home.vue') },
+    {
+      path: '/',
+      name: 'home',
+      component: () => import('@/components/Home.vue'),
+    },
 
-    { path: '/login', name: 'login', component: () => import('@/components/auth/AppLogin.vue') },
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/components/auth/AppLogin.vue'),
+    },
 
-    // больше НИКАКИХ meta.right — доступ открыт, ограничения только визуально
-    { path: '/students',  component: () => import('@/components/students/TableStudent.vue') },
-    { path: '/teachers',  component: () => import('@/components/teachers/TableTeachers.vue') },
+    // Доступ открыт, ограничиваем только визуально (меню и т.п.)
+    { path: '/students', component: () => import('@/components/students/TableStudent.vue') },
+    { path: '/teachers', component: () => import('@/components/teachers/TableTeachers.vue') },
     { path: '/contracts', component: () => import('@/components/contracts/TableContracts.vue') },
 
     { path: '/equipment/os',      component: () => import('@/components/equipment/os/TableOS.vue') },
@@ -30,11 +41,17 @@ const router = createRouter({
     { path: '/analysis/mol',            component: () => import('@/components/analysis/PerecMOL.vue') },
     { path: '/analysis/filials',        component: () => import('@/components/analysis/TableFil.vue') },
 
+    // --- Тех анализ ---
+    { path: '/teh-analiz/kolic-os',       component: () => import('@/components/tehAnaliz/kolicOS.vue') },
+    { path: '/teh-analiz/kolic-mz',       component: () => import('@/components/tehAnaliz/kolicMZ.vue') },
+    { path: '/teh-analiz/raskhozhdeniye', component: () => import('@/components/tehAnaliz/raskhozhdeniye.vue') },
+
+    // fallback на главную
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 });
 
-// единственная логика — требуем логин для любых страниц, кроме /login
+// Единственная логика — требуем логин для любых страниц, кроме /login
 router.beforeEach((to) => {
   const authed = isAuthed();
 

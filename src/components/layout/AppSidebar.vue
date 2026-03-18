@@ -62,6 +62,7 @@ const openMap = ref({
   contracts: true,
   equipment: true,
   analysis: true,
+  tehAnaliz: true, // <-- добавили для нового раздела
 })
 const toggle  = k => (openMap.value[k] = !openMap.value[k])
 const isOpen  = k => !!openMap.value[k]
@@ -105,6 +106,18 @@ const menu = [
       { label: 'Забаланс Архив', to: '/analysis/mz-off-archive' },
       { label: 'МОЛ', to: '/analysis/mol' },
       { label: 'Филиал', to: '/analysis/filials' },
+    ],
+  },
+
+  // --- Тех анализ (права как у "Анализ") ---
+  {
+    key: 'tehAnaliz',
+    title: 'Тех анализ',
+    flag: 'Анализ',
+    items: [
+      { label: 'Колличественный ОС', to: '/teh-analiz/kolic-os' },
+      { label: 'Колличественный МЗ', to: '/teh-analiz/kolic-mz' },
+      { label: 'Расхождение', to: '/teh-analiz/raskhozhdeniye' },
     ],
   },
 ]

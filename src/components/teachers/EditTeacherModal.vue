@@ -19,8 +19,12 @@
 
         <div class="form-row">
           <label>Филиал:</label>
-          <select v-model="branch" required>
-            <option v-for="b in branches" :key="b" :value="b">{{ b }}</option>
+          <select
+            v-model="branch"
+            :disabled="lockToBranch || saving"
+            required
+          >
+            <option v-for="b in availableBranches" :key="b" :value="b">{{ b }}</option>
           </select>
         </div>
 
@@ -49,56 +53,120 @@
 </template>
 
 <script>
-import http from '@/api/http';
+import http from '@/api/http'
+
+function normalizeBranch(v) {
+  return typeof v === 'string' ? v.trim() : ''
+}
 
 export default {
   props: {
-    teacher:  { type: Object, required: true },
-    branches: { type: Array,  required: true }
+    teacher: { type: Object, required: true },
+    branches: { type: Array, required: true },
+    lockToBranch: { type: Boolean, default: false },
+    userBranch: { type: String, default: '' }
   },
   emits: ['close', 'teacher-updated'],
   data() {
-    const statusBool = parseStatus(this.teacher.Работа_Статус);
+    const statusBool = parseStatus(this.teacher.Работа_Статус)
+
     return {
-      surname:    this.teacher.Фамилия || '',
-      name:       this.teacher.Имя || '',
+      surname: this.teacher.Фамилия || '',
+      name: this.teacher.Имя || '',
       patronymic: this.teacher.Отчество || '',
-      date:       toInputDate(this.teacher.Дата_Приема_На_Работу),
-      firedDate:  toInputDate(this.teacher.Дата_Увольнения),
-      subject:    this.teacher.Предмет || '',
-      address:    this.teacher.Адрес_Регистрации || '',
-      branch:     this.teacher.Филиал || (this.branches[0] || ''),
-      workStatus: statusBool, // boolean
+      date: toInputDate(this.teacher.Дата_Приема_На_Работу),
+      firedDate: toInputDate(this.teacher.Дата_Увольнения),
+      subject: this.teacher.Предмет || '',
+      address: this.teacher.Адрес_Регистрации || '',
+      branch: normalizeBranch(this.teacher.Филиал || ''),
+      workStatus: statusBool,
       error: '',
       saving: false
-    };
+    }
+  },
+  computed: {
+    availableBranches() {
+      const cleaned = []
+      const seen = new Set()
+
+      for (const item of this.branches || []) {
+        const name = normalizeBranch(item)
+        if (!name || name === 'Все' || seen.has(name)) continue
+        seen.add(name)
+        cleaned.push(name)
+      }
+
+      if (this.lockToBranch) {
+        const own = normalizeBranch(this.userBranch)
+        if (own) return [own]
+      }
+
+      return cleaned
+    }
   },
   watch: {
     workStatus(newVal) {
-      if (newVal === true) this.firedDate = '';
+      if (newVal === true) this.firedDate = ''
     },
     teacher: {
       immediate: true,
       handler(t) {
-        if (!t) return;
-        this.surname    = t.Фамилия || '';
-        this.name       = t.Имя || '';
-        this.patronymic = t.Отчество || '';
-        this.date       = toInputDate(t.Дата_Приема_На_Работу);
-        this.firedDate  = toInputDate(t.Дата_Увольнения);
-        this.subject    = t.Предмет || '';
-        this.address    = t.Адрес_Регистрации || '';
-        this.branch     = t.Филиал || (this.branches[0] || '');
-        this.workStatus = parseStatus(t.Работа_Статус);
+        if (!t) return
+
+        this.surname = t.Фамилия || ''
+        this.name = t.Имя || ''
+        this.patronymic = t.Отчество || ''
+        this.date = toInputDate(t.Дата_Приема_На_Работу)
+        this.firedDate = toInputDate(t.Дата_Увольнения)
+        this.subject = t.Предмет || ''
+        this.address = t.Адрес_Регистрации || ''
+        this.branch = normalizeBranch(t.Филиал || '')
+        this.workStatus = parseStatus(t.Работа_Статус)
+
+        this.applyBranchRules()
       }
+    },
+    branches: {
+      immediate: true,
+      handler() {
+        this.applyBranchRules()
+      }
+    },
+    userBranch() {
+      this.applyBranchRules()
+    },
+    lockToBranch() {
+      this.applyBranchRules()
     }
   },
   methods: {
+    applyBranchRules() {
+      const list = this.availableBranches || []
+
+      if (!list.length) {
+        this.branch = ''
+        return
+      }
+
+      if (this.lockToBranch) {
+        this.branch = list[0]
+        return
+      }
+
+      if (!this.branch || !list.includes(this.branch)) {
+        this.branch = list[0]
+      }
+    },
     async saveTeacher() {
-      this.error = '';
-      this.saving = true;
+      this.error = ''
+      this.saving = true
+
       try {
-        const fio = [this.surname, this.name, this.patronymic].filter(Boolean).join(' ');
+        const fio = [this.surname, this.name, this.patronymic].filter(Boolean).join(' ')
+        const filialToSave = this.lockToBranch
+          ? (this.availableBranches[0] || normalizeBranch(this.userBranch))
+          : this.branch
+
         const payload = {
           Код: this.teacher.Код,
           Фамилия: this.surname,
@@ -108,41 +176,47 @@ export default {
           Дата_Приема_На_Работу: this.date || '',
           Предмет: this.subject,
           Адрес_Регистрации: this.address,
-          Филиал: this.branch,
-          // ← отправляем именно boolean
+          Филиал: filialToSave,
           Работа_Статус: this.workStatus === true,
           Дата_Увольнения: this.workStatus === false ? (this.firedDate || '') : ''
-        };
-        await http.post('/RCDO/hs/rcdo/edit_teacher', payload);
-        this.$emit('teacher-updated');
+        }
+
+        await http.post('/RCDO/hs/rcdo/edit_teacher', payload)
+        this.$emit('teacher-updated')
       } catch (e) {
-        this.error = 'Ошибка при сохранении изменений: ' + (e.response?.data || e.message);
+        this.error = 'Ошибка при сохранении изменений: ' + (e.response?.data || e.message)
       } finally {
-        this.saving = false;
+        this.saving = false
       }
     }
   }
-};
+}
 
 // helpers
 function toInputDate(val) {
-  if (!val || val === '0001-01-01T00:00:00' || val === 'Не указана') return '';
-  if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10);
+  if (!val || val === '0001-01-01T00:00:00' || val === 'Не указана') return ''
+  if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10)
   if (/^\d{2}\.\d{2}\.\d{4}$/.test(val)) {
-    const [d, m, y] = val.split('.');
-    return `${y}-${m}-${d}`;
+    const [d, m, y] = val.split('.')
+    return `${y}-${m}-${d}`
   }
-  const d = new Date(val);
+  const d = new Date(val)
   if (!isNaN(d)) {
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    const pad = n => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
   }
-  return '';
+  return ''
 }
+
 function parseStatus(raw) {
-  if (raw === true || raw === 1 || raw === '1') return true;
-  const s = String(raw ?? '').trim().toLowerCase();
-  return s === 'да' || s === 'true' || s === 'истина' || s === 'активен';
+  if (raw === true || raw === 1 || raw === '1') return true
+  if (raw === false || raw === 0 || raw === '0') return false
+
+  const s = String(raw ?? '').trim().toLowerCase()
+  if (['да', 'true', 'истина', 'активен', 'работает', 'on', 'yes', 'y'].includes(s)) return true
+  if (['нет', 'false', 'ложь', 'неактивен', 'уволен', 'off', 'no', 'n'].includes(s)) return false
+
+  return false
 }
 </script>
 

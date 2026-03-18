@@ -13,7 +13,9 @@
 
     <AddStudentModal
       v-if="showAddModal"
-      :branches="branchesList"
+      :branches="studentFormBranches"
+      :lock-to-branch="!canEditOtherFilialData"
+      :user-branch="userFilial"
       @close="showAddModal = false"
       @student-added="handleStudentAdded"
     />
@@ -21,7 +23,9 @@
     <EditStudentModal
       v-if="showEditModal"
       :student="selectedStudent"
-      :branches="branchesList"
+      :branches="studentFormBranches"
+      :lock-to-branch="!canEditOtherFilialData"
+      :user-branch="userFilial"
       @close="closeEditModal"
       @student-updated="handleStudentUpdated"
     />
@@ -36,13 +40,31 @@
       <button @click="fetchAll" class="retry-button">Попробовать снова</button>
     </div>
 
-    <div class="filter-container" v-if="!loading && !error && branchesList.length > 1">
+    <div
+      class="filter-container"
+      v-if="!loading && !error && filterBranchesList.length > 0"
+    >
       <label for="branch-filter">Фильтр по филиалу: </label>
-      <select id="branch-filter" v-model="selectedBranch">
-        <option v-for="branch in branchesList" :key="branch" :value="branch">{{ branch }}</option>
+      <select
+        id="branch-filter"
+        v-model="selectedBranch"
+        :disabled="!canEditOtherFilialData"
+      >
+        <option
+          v-for="branch in filterBranchesList"
+          :key="branch"
+          :value="branch"
+        >
+          {{ branch }}
+        </option>
       </select>
+
       <label class="ml-3">
-        <input type="checkbox" v-model="showInactiveOnly" style="vertical-align: middle; margin-right: 6px;" />
+        <input
+          type="checkbox"
+          v-model="showInactiveOnly"
+          style="vertical-align: middle; margin-right: 6px;"
+        />
         Показать выбывших
       </label>
     </div>
@@ -60,7 +82,7 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import DataTable from '@/components/shared/DataTable.vue'
 import AddStudentModal from '@/components/students/AddStudentModal.vue'
 import EditStudentModal from '@/components/students/EditStudentModal.vue'
@@ -72,9 +94,27 @@ function toBool(v) {
   if (v == null) return false
   if (typeof v === 'number') return v !== 0
   const s = String(v).trim().toLowerCase()
-  if (['да','истина','true','1','активен','учится','обучается','yes','y'].includes(s)) return true
-  if (['нет','ложь','false','0','не активен','no','n'].includes(s)) return false
+  if (['да', 'истина', 'true', '1', 'активен', 'учится', 'обучается', 'yes', 'y'].includes(s)) return true
+  if (['нет', 'ложь', 'false', '0', 'не активен', 'no', 'n'].includes(s)) return false
   return false
+}
+
+function normalizeBranchName(v) {
+  return typeof v === 'string' ? v.trim() : ''
+}
+
+function uniqueBranches(arr = []) {
+  const seen = new Set()
+  const result = []
+
+  for (const item of arr) {
+    const name = normalizeBranchName(item)
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    result.push(name)
+  }
+
+  return result
 }
 
 // чтение прав из localStorage
@@ -82,7 +122,9 @@ function readRights() {
   try {
     const u = JSON.parse(localStorage.getItem('user') || 'null')
     return (u && u.rights) ? u.rights : {}
-  } catch { return {} }
+  } catch {
+    return {}
+  }
 }
 
 // чтение филиала пользователя из localStorage (fallback на разные возможные поля)
@@ -134,34 +176,86 @@ export default {
     const showEditModal = ref(false)
     const selectedStudent = ref(null)
 
-    // === права ===
+    // === права / филиал пользователя ===
     const rights = ref(readRights())
-    const canAddStudent  = computed(() => !!rights.value['ДобавлениеУченика'])
-    const canEditStudent = computed(() => !!rights.value['РедактированиеУченика'])
-    const refreshRights = () => { rights.value = readRights() }
+    const userFilial = ref(normalizeBranchName(readUserFilial()))
 
-    // применить «филиал по умолчанию» к выпадающему списку
+    const canAddStudent = computed(() => !!rights.value['ДобавлениеУченика'])
+    const canEditStudent = computed(() => !!rights.value['РедактированиеУченика'])
+    const canEditOtherFilialData = computed(() => !!rights.value['РедактированиеДанныхЧужогоФилиала'])
+
+    const refreshAuthContext = () => {
+      rights.value = readRights()
+      userFilial.value = normalizeBranchName(readUserFilial())
+    }
+
+    const filterBranchesList = computed(() => {
+      if (!canEditOtherFilialData.value && userFilial.value) {
+        return [userFilial.value]
+      }
+      return branchesList.value
+    })
+
+    const studentFormBranches = computed(() => {
+      if (!canEditOtherFilialData.value && userFilial.value) {
+        return [userFilial.value]
+      }
+      return branchesList.value.filter(branch => branch && branch !== 'Все')
+    })
+
     const applyDefaultBranch = () => {
-      const def = readUserFilial()
-      if (def && branchesList.value.includes(def)) {
-        selectedBranch.value = def
-      } else {
+      const own = normalizeBranchName(userFilial.value || readUserFilial())
+
+      if (!canEditOtherFilialData.value) {
+        selectedBranch.value = own || 'Все'
+        return
+      }
+
+      if (own && branchesList.value.includes(own)) {
+        selectedBranch.value = own
+        return
+      }
+
+      if (!selectedBranch.value || !branchesList.value.includes(selectedBranch.value)) {
         selectedBranch.value = 'Все'
       }
     }
 
+    watch(userFilial, () => {
+      applyDefaultBranch()
+    })
+
+    watch(canEditOtherFilialData, () => {
+      applyDefaultBranch()
+    })
+
+    watch(branchesList, () => {
+      applyDefaultBranch()
+    }, { deep: true })
+
+    watch(selectedBranch, (newVal) => {
+      if (!canEditOtherFilialData.value) {
+        const forced = userFilial.value || 'Все'
+        if (newVal !== forced) {
+          selectedBranch.value = forced
+        }
+      }
+    })
+
     onMounted(() => {
+      refreshAuthContext()
       fetchAll()
       window.addEventListener('auth-changed', onAuthRelatedChange)
       window.addEventListener('storage', onAuthRelatedChange)
     })
+
     onBeforeUnmount(() => {
       window.removeEventListener('auth-changed', onAuthRelatedChange)
       window.removeEventListener('storage', onAuthRelatedChange)
     })
 
-    function onAuthRelatedChange () {
-      refreshRights()
+    function onAuthRelatedChange() {
+      refreshAuthContext()
       applyDefaultBranch()
     }
 
@@ -169,13 +263,29 @@ export default {
       try {
         const { data } = await http.get('/RCDO/hs/rcdo/MOL')
         const filialy = (typeof data === 'string') ? JSON.parse(data).filialy : data.filialy
-        const allNames = (filialy || []).map(f => f.НаименованиеФилиала || f.Наименование).filter(Boolean)
-        branchesList.value = ['Все', ...allNames.sort()]
-        // после загрузки списка филиалов — выбрать дефолтный из профиля
+
+        const allNamesRaw = (filialy || [])
+          .map(f => f.НаименованиеФилиала || f.Наименование)
+          .filter(Boolean)
+
+        const names = uniqueBranches(allNamesRaw)
+
+        if (userFilial.value && !names.includes(userFilial.value)) {
+          names.push(userFilial.value)
+        }
+
+        names.sort((a, b) => a.localeCompare(b, 'ru'))
+
+        branchesList.value = ['Все', ...names]
         applyDefaultBranch()
       } catch {
-        branchesList.value = ['Все']
-        selectedBranch.value = 'Все'
+        if (userFilial.value) {
+          branchesList.value = ['Все', userFilial.value]
+          selectedBranch.value = userFilial.value
+        } else {
+          branchesList.value = ['Все']
+          selectedBranch.value = 'Все'
+        }
       }
     }
 
@@ -185,20 +295,29 @@ export default {
         error.value = null
         errorDetails.value = null
         students.value = []
-        // НЕ сбрасываем selectedBranch — сохраняем выбор/дефолт
+
         const { data: resp } = await http.get('/RCDO/hs/rcdo/ucenici')
+
         if (resp && Array.isArray(resp.ученики)) {
           students.value = resp.ученики.map(student => {
             const dateStr = student.Дата_Поступления
             let formattedDate = 'Не указана'
+
             if (dateStr && dateStr !== '0001-01-01T00:00:00') {
               const d = new Date(dateStr)
               if (!isNaN(d)) formattedDate = d.toLocaleDateString('ru-RU')
               else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) formattedDate = dateStr.split('-').reverse().join('.')
               else formattedDate = dateStr
             }
+
             const branch = student.Филиал ? String(student.Филиал).trim() : 'Не указан'
-            return { ...student, Дата_Поступления: formattedDate, _statusBool: toBool(student.Обучение_Статус), Филиал: branch }
+
+            return {
+              ...student,
+              Дата_Поступления: formattedDate,
+              _statusBool: toBool(student.Обучение_Статус),
+              Филиал: branch
+            }
           })
         } else {
           throw new Error('Некорректный формат данных в ответе сервера')
@@ -217,23 +336,51 @@ export default {
           error.value = 'Не удалось загрузить данные. Пожалуйста, попробуйте позже.'
           errorDetails.value = err.message
         }
-      } finally { loading.value = false }
+      } finally {
+        loading.value = false
+      }
     }
 
-    const fetchAll = async () => { loading.value = true; await fetchFilialy(); await fetchStudents() }
+    const fetchAll = async () => {
+      loading.value = true
+      await fetchFilialy()
+      await fetchStudents()
+    }
 
     const filteredStudents = computed(() => {
       let arr = students.value
-      const sel = (selectedBranch.value || '').trim()
-      if (sel !== 'Все') arr = arr.filter(s => (s.Филиал || '').trim() === sel)
+
+      const activeBranchFilter = !canEditOtherFilialData.value
+        ? (userFilial.value || 'Все')
+        : (selectedBranch.value || '').trim()
+
+      if (activeBranchFilter !== 'Все') {
+        arr = arr.filter(s => (s.Филиал || '').trim() === activeBranchFilter)
+      }
+
       if (showInactiveOnly.value) return arr
+
       arr = arr.filter(s => s._statusBool)
-      return arr.map(stud => ({ ...stud, rowClass: !stud._statusBool ? 'inactive-row' : '' }))
+
+      return arr.map(stud => ({
+        ...stud,
+        rowClass: !stud._statusBool ? 'inactive-row' : ''
+      }))
     })
 
-    const handleStudentAdded = () => { showAddModal.value = false; fetchAll() }
-    const handleStudentUpdated = () => { showEditModal.value = false; fetchAll() }
-    const closeEditModal = () => { showEditModal.value = false }
+    const handleStudentAdded = () => {
+      showAddModal.value = false
+      fetchAll()
+    }
+
+    const handleStudentUpdated = () => {
+      showEditModal.value = false
+      fetchAll()
+    }
+
+    const closeEditModal = () => {
+      showEditModal.value = false
+    }
 
     // Открытие модалки редактирования только при праве РедактированиеУченика
     const onRowClick = (student) => {
@@ -246,14 +393,34 @@ export default {
     const onSortChanged = () => { /* noop */ }
 
     return {
-      // таблица / данные
-      displayedColumns, students, loading, error, errorDetails, fetchAll, onSortChanged,
-      selectedBranch, branchesList, filteredStudents, showInactiveOnly,
-      // модалки
-      showAddModal, handleStudentAdded,
-      showEditModal, selectedStudent, handleStudentUpdated, closeEditModal, onRowClick,
-      // права
-      canAddStudent, canEditStudent
+      displayedColumns,
+      students,
+      loading,
+      error,
+      errorDetails,
+      fetchAll,
+      onSortChanged,
+
+      selectedBranch,
+      branchesList,
+      filterBranchesList,
+      studentFormBranches,
+      filteredStudents,
+      showInactiveOnly,
+
+      showAddModal,
+      handleStudentAdded,
+
+      showEditModal,
+      selectedStudent,
+      handleStudentUpdated,
+      closeEditModal,
+      onRowClick,
+
+      canAddStudent,
+      canEditStudent,
+      canEditOtherFilialData,
+      userFilial
     }
   }
 }

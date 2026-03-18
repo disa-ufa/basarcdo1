@@ -26,7 +26,7 @@
 
         <div class="form-row">
           <label>ФИО пользователя:</label>
-          <select v-model="fio" :disabled="!userType" required>
+          <select v-model="fio" :disabled="!userType || !branch" required>
             <option value="">Выбрать</option>
             <option
               v-for="person in fioOptions"
@@ -40,9 +40,13 @@
 
         <div class="form-row">
           <label>Филиал:</label>
-          <select v-model="branch" required>
+          <select
+            v-model="branch"
+            :disabled="lockToBranch || saving"
+            required
+          >
             <option value="">Выбрать</option>
-            <option v-for="b in branchesList" :key="b" :value="b">
+            <option v-for="b in availableBranches" :key="b" :value="b">
               {{ b }}
             </option>
           </select>
@@ -64,188 +68,272 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, watch } from "vue";
-import http from "@/api/http";
+import { ref, computed, onMounted, watch } from 'vue'
+import http from '@/api/http'
 
-const basic = "Basic " + btoa("admin:10028585mM");
+const basic = 'Basic ' + btoa('admin:10028585mM')
+
+function normalizeBranch(v) {
+  return typeof v === 'string' ? v.trim() : ''
+}
 
 export default {
-  emits: ["close", "contract-added"],
-  setup(_, { emit }) {
-    const number = ref("");
-    const date = ref("");
-    const userType = ref("");
-    const fio = ref("");
-    const branch = ref("");
-    const error = ref("");
-    const saving = ref(false);
+  props: {
+    usersList: { type: Array, default: () => [] },
+    branchesList: { type: Array, default: () => [] },
+    lockToBranch: { type: Boolean, default: false },
+    userBranch: { type: String, default: '' }
+  },
+  emits: ['close', 'contract-added'],
+  setup(props, { emit }) {
+    const number = ref('')
+    const date = ref('')
+    const userType = ref('')
+    const fio = ref('')
+    const branch = ref('')
+    const error = ref('')
+    const saving = ref(false)
 
-    const students = ref([]);
-    const teachers = ref([]);
-    const allContracts = ref([]);
-    const busyFioSet = ref(new Set());
-    const branchesList = ref([]);
+    const students = ref([])
+    const teachers = ref([])
+    const allContracts = ref([])
+    const busyFioSet = ref(new Set())
+    const internalBranchesList = ref([])
 
-    // --- загрузки -----------------------------------------------------------
     const fetchBranches = async () => {
       try {
-        const { data } = await http.get("/RCDO/hs/rcdo/MOL", {
-          headers: { Authorization: basic },
-        });
-        const arr = Array.isArray(data.filialy) ? data.filialy : [];
-        const names = new Set();
+        const { data } = await http.get('/RCDO/hs/rcdo/MOL', {
+          headers: { Authorization: basic }
+        })
+        const arr = Array.isArray(data.filialy) ? data.filialy : []
+        const names = new Set()
         for (const f of arr) {
-          if (f.НаименованиеФилиала) names.add(f.НаименованиеФилиала);
-          else if (f.Наименование) names.add(f.Наименование);
+          const name = normalizeBranch(f.НаименованиеФилиала || f.Наименование)
+          if (name) names.add(name)
         }
-        branchesList.value = Array.from(names).sort();
+        internalBranchesList.value = Array.from(names).sort((a, b) => a.localeCompare(b, 'ru'))
       } catch {
-        branchesList.value = [];
+        internalBranchesList.value = []
       }
-    };
+    }
 
     const fetchContracts = async () => {
       try {
-        const { data } = await http.get("/RCDO/hs/rcdo/ucenicidogovora", {
-          headers: { Authorization: basic },
-        });
-        const list = Array.isArray(data.договоры) ? data.договоры : [];
-        allContracts.value = list;
-        busyFioSet.value = new Set(list.map((c) => c.ФИО).filter(Boolean));
+        const { data } = await http.get('/RCDO/hs/rcdo/ucenicidogovora', {
+          headers: { Authorization: basic }
+        })
+        const list = Array.isArray(data.договоры) ? data.договоры : []
+        allContracts.value = list
+        busyFioSet.value = new Set(list.map((c) => c.ФИО).filter(Boolean))
       } catch {
-        allContracts.value = [];
-        busyFioSet.value = new Set();
+        allContracts.value = []
+        busyFioSet.value = new Set()
       }
-    };
+    }
 
     const fetchStudents = async () => {
       try {
-        const { data } = await http.get("/RCDO/hs/rcdo/ucenici", {
-          headers: { Authorization: basic },
-        });
-        students.value = Array.isArray(data.ученики) ? data.ученики : [];
+        const { data } = await http.get('/RCDO/hs/rcdo/ucenici', {
+          headers: { Authorization: basic }
+        })
+        students.value = Array.isArray(data.ученики) ? data.ученики : []
       } catch {
-        students.value = [];
+        students.value = []
       }
-    };
+    }
 
     const fetchTeachers = async () => {
       try {
-        const { data } = await http.get("/RCDO/hs/rcdo/teachers", {
-          headers: { Authorization: basic },
-        });
-        teachers.value = Array.isArray(data.teachers) ? data.teachers : [];
+        const { data } = await http.get('/RCDO/hs/rcdo/teachers', {
+          headers: { Authorization: basic }
+        })
+        teachers.value = Array.isArray(data.teachers) ? data.teachers : []
       } catch {
-        teachers.value = [];
+        teachers.value = []
       }
-    };
+    }
 
-    // --- derived ------------------------------------------------------------
-    const getNextContractNumber = () => {
-      let maxNum = 0;
-      for (const c of allContracts.value) {
-        let num = 0;
-        if (typeof c.Номер_Договора === "number") {
-          num = c.Номер_Договора;
-        } else if (c.Номер_Договора && !Number.isNaN(Number(String(c.Номер_Договора).trim()))) {
-          num = Number(String(c.Номер_Договора).trim());
-        } else if (c.Наименование && !Number.isNaN(Number(String(c.Наименование).trim()))) {
-          num = Number(String(c.Наименование).trim());
-        }
-        if (num > maxNum) maxNum = num;
+    const availableBranches = computed(() => {
+      const seen = new Set()
+      const result = []
+
+      const fromInternal = internalBranchesList.value || []
+      const fromProps = props.branchesList || []
+
+      for (const raw of [...fromInternal, ...fromProps]) {
+        const name = normalizeBranch(raw)
+        if (!name || name === 'Все' || seen.has(name)) continue
+        seen.add(name)
+        result.push(name)
       }
-      return String(maxNum + 1);
-    };
+
+      if (props.lockToBranch) {
+        const own = normalizeBranch(props.userBranch)
+        return own ? [own] : result
+      }
+
+      return result
+    })
+
+    const getNextContractNumber = () => {
+      let maxNum = 0
+      for (const c of allContracts.value) {
+        let num = 0
+        if (typeof c.Номер_Договора === 'number') {
+          num = c.Номер_Договора
+        } else if (c.Номер_Договора && !Number.isNaN(Number(String(c.Номер_Договора).trim()))) {
+          num = Number(String(c.Номер_Договора).trim())
+        } else if (c.Наименование && !Number.isNaN(Number(String(c.Наименование).trim()))) {
+          num = Number(String(c.Наименование).trim())
+        }
+        if (num > maxNum) maxNum = num
+      }
+      return String(maxNum + 1)
+    }
 
     const setDefaults = () => {
-      userType.value = "";
-      fio.value = "";
-      branch.value = "";
-      number.value = getNextContractNumber();
+      userType.value = ''
+      fio.value = ''
+      number.value = getNextContractNumber()
+
       if (!date.value) {
-        const d = new Date();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        date.value = `${d.getFullYear()}-${mm}-${dd}`;
+        const d = new Date()
+        const mm = String(d.getMonth() + 1).padStart(2, '0')
+        const dd = String(d.getDate()).padStart(2, '0')
+        date.value = `${d.getFullYear()}-${mm}-${dd}`
       }
-    };
+
+      if (props.lockToBranch) {
+        branch.value = normalizeBranch(props.userBranch)
+        return
+      }
+
+      if (!branch.value || !availableBranches.value.includes(branch.value)) {
+        branch.value = ''
+      }
+    }
 
     const fioOptions = computed(() => {
-      if (!userType.value) return [];
-      const busy = busyFioSet.value;
-      if (userType.value === "Ученик") {
-        return students.value.filter((s) => !busy.has(s.Наименование));
-      }
-      if (userType.value === "Учитель") {
-        return teachers.value.filter((t) => !busy.has(t.Наименование));
-      }
-      return [];
-    });
+      if (!userType.value || !branch.value) return []
 
-    watch(userType, () => { fio.value = ""; });
+      const busy = busyFioSet.value
+      const selectedBranch = normalizeBranch(branch.value)
 
-    watch(branchesList, () => {
-      if (branch.value && !branchesList.value.includes(branch.value)) {
-        branch.value = "";
+      if (userType.value === 'Ученик') {
+        return students.value.filter((s) => {
+          const fioName = s?.Наименование
+          const filial = normalizeBranch(s?.Филиал)
+          return filial === selectedBranch && fioName && !busy.has(fioName)
+        })
       }
-    });
+
+      if (userType.value === 'Учитель') {
+        return teachers.value.filter((t) => {
+          const fioName = t?.Наименование
+          const filial = normalizeBranch(t?.Филиал)
+          return filial === selectedBranch && fioName && !busy.has(fioName)
+        })
+      }
+
+      return []
+    })
+
+    watch(userType, () => {
+      fio.value = ''
+    })
+
+    watch(branch, () => {
+      fio.value = ''
+    })
+
+    watch(availableBranches, () => {
+      if (props.lockToBranch) {
+        branch.value = normalizeBranch(props.userBranch)
+        return
+      }
+
+      if (branch.value && !availableBranches.value.includes(branch.value)) {
+        branch.value = ''
+      }
+    }, { deep: true })
+
+    watch(() => props.userBranch, () => {
+      if (props.lockToBranch) {
+        branch.value = normalizeBranch(props.userBranch)
+      }
+    })
+
+    watch(() => props.lockToBranch, (locked) => {
+      if (locked) {
+        branch.value = normalizeBranch(props.userBranch)
+      }
+    })
 
     const canSubmit = computed(() => {
-      const numOk = String(number.value || "").trim() !== "";
-      return numOk && !!date.value && !!userType.value && !!fio.value && !!branch.value;
-    });
+      const numOk = String(number.value || '').trim() !== ''
+      return numOk && !!date.value && !!userType.value && !!fio.value && !!branch.value
+    })
 
-    // --- actions ------------------------------------------------------------
     const loadAll = async () => {
-      await Promise.all([fetchBranches(), fetchContracts(), fetchStudents(), fetchTeachers()]);
-      setDefaults();
-    };
+      await Promise.all([fetchBranches(), fetchContracts(), fetchStudents(), fetchTeachers()])
+      setDefaults()
+    }
 
     const addContract = async () => {
-      error.value = "";
-      if (!canSubmit.value) return;
+      error.value = ''
+      if (!canSubmit.value) return
 
-      saving.value = true;
+      saving.value = true
       try {
+        const filialToSave = props.lockToBranch
+          ? normalizeBranch(props.userBranch)
+          : branch.value
+
         const payload = {
           Номер_Договора: Number(number.value),
           Дата_Подписания: date.value,
           Пользователь: userType.value,
           ФИО: fio.value,
-          Филиал: branch.value,
-        };
+          Филиал: filialToSave
+        }
 
-        // 1) создаём договор
-        await http.post("/RCDO/hs/rcdo/add_contract", payload, {
-          headers: { Authorization: basic },
-        });
+        await http.post('/RCDO/hs/rcdo/add_contract', payload, {
+          headers: { Authorization: basic }
+        })
 
-        // 2) поднимаем событие вверх — просто номер (модалка сама подгрузит)
-        emit("contract-added", Number(number.value));
+        emit('contract-added', Number(number.value))
       } catch (e) {
         const msg =
           e?.response?.data?.message ||
           e?.response?.data ||
           e?.message ||
-          "Неизвестная ошибка";
-        error.value = "Ошибка при сохранении: " + msg;
+          'Неизвестная ошибка'
+        error.value = 'Ошибка при сохранении: ' + msg
       } finally {
-        saving.value = false;
+        saving.value = false
       }
-    };
+    }
 
-    onMounted(loadAll);
+    onMounted(loadAll)
 
     return {
-      number, date, userType, fio, branch, error, saving,
-      branchesList, fioOptions, canSubmit, addContract,
-    };
-  },
-};
+      number,
+      date,
+      userType,
+      fio,
+      branch,
+      error,
+      saving,
+      availableBranches,
+      fioOptions,
+      canSubmit,
+      addContract
+    }
+  }
+}
 </script>
 
 <style scoped>
-/* стили без изменений */
 .modal-backdrop{position:fixed;z-index:9999;inset:0;background:rgba(0,0,0,.12);display:flex;justify-content:flex-end;align-items:stretch}
 .modal-window{background:#fff;width:420px;max-width:100vw;height:100%;box-shadow:-2px 0 24px rgba(0,0,0,.13);position:relative;padding:36px 28px 20px;animation:slideInPanel .35s cubic-bezier(.33,.9,.56,1.02);overflow-y:auto}
 @keyframes slideInPanel{from{transform:translateX(100%);opacity:.3}to{transform:translateX(0);opacity:1}}

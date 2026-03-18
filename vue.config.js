@@ -11,6 +11,7 @@ module.exports = {
     proxy: {
       '^/api': {
         target: 'http://192.168.88.102',
+        //target: 'http://136.169.171.150',
         changeOrigin: true,
         logLevel: 'debug',
         proxyTimeout: 30000,
