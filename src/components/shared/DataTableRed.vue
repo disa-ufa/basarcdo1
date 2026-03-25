@@ -1,7 +1,5 @@
-<!-- File: src/components/DataTableRed.vue -->
 <template>
   <div class="data-table-component">
-    <!-- Поиск -->
     <div class="search-container">
       <input
         type="text"
@@ -36,7 +34,11 @@
             <td :colspan="columnsLocal.length" class="no-results">Ничего не найдено</td>
           </tr>
 
-          <tr v-for="(row, index) in filteredData" :key="index">
+          <tr
+            v-for="(row, index) in filteredData"
+            :key="index"
+            :class="['data-row', getRowClass(row)]"
+          >
             <td v-for="col in columnsLocal" :key="col.key">
               <template v-if="col.key === 'actions'">
                 <button @click="handleActionClick(row)" class="action-button">Открыть</button>
@@ -56,10 +58,8 @@
 import { ref, computed, watch } from 'vue'
 
 const props = defineProps({
-  /* Новые имена пропсов */
   tableData: { type: Array, default: () => [] },
   tableColumns: { type: Array, default: () => [] },
-  /* Старые совместимые имена (чтобы не падали старые импорты) */
   items: { type: Array, default: () => [] },
   columns: { type: Array, default: () => [] },
 
@@ -73,7 +73,6 @@ const props = defineProps({
 
 const emit = defineEmits(['sort-changed', 'action-triggered'])
 
-/* Унификация входных данных: поддерживаем оба набора пропсов */
 const columnsLocal = ref([...(props.tableColumns.length ? props.tableColumns : props.columns)])
 const dataLocal = ref([...(props.tableData.length ? props.tableData : props.items)])
 
@@ -116,7 +115,7 @@ const filteredData = computed(() => {
   return result
 })
 
-function sortBy (key) {
+function sortBy(key) {
   if (key === 'actions') return
   if (sortKey.value === key) {
     sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
@@ -127,13 +126,29 @@ function sortBy (key) {
   emit('sort-changed', { key: sortKey.value, order: sortOrder.value })
 }
 
+function getRowClass(row) {
+  const rowClass = row?.rowClass
+
+  if (!rowClass) return ''
+  if (typeof rowClass === 'string') return rowClass
+  if (Array.isArray(rowClass)) return rowClass.filter(Boolean).join(' ')
+  if (typeof rowClass === 'object') {
+    return Object.entries(rowClass)
+      .filter(([, enabled]) => !!enabled)
+      .map(([className]) => className)
+      .join(' ')
+  }
+
+  return ''
+}
+
 let t
-function handleSearch () {
+function handleSearch() {
   clearTimeout(t)
   t = setTimeout(() => {}, 250)
 }
 
-function handleActionClick (row) {
+function handleActionClick(row) {
   emit('action-triggered', row)
 }
 </script>
@@ -172,8 +187,26 @@ function handleActionClick (row) {
 .data-table th:hover { background-color: #f0f0f0; }
 .data-table th.active { background-color: #e9ecef; }
 .data-table td { padding: 10px 15px; border-bottom: 1px solid #eee; color: #333; }
-.data-table tr:hover { background-color: #f5f5f5; }
-.data-table .no-results { text-align: center; padding: 20px; color: #666; font-style: italic; }
+
+.data-table tbody tr.data-row:hover td {
+  background-color: #f5f5f5;
+}
+
+/* Списанные договоры — отдельный заметный цвет */
+.data-table tbody tr.contract-writtenoff-row td {
+  background-color: #f8d7da !important;
+}
+
+.data-table tbody tr.contract-writtenoff-row:hover td {
+  background-color: #f1bcc3 !important;
+}
+
+.data-table .no-results {
+  text-align: center;
+  padding: 20px;
+  color: #666;
+  font-style: italic;
+}
 .sort-indicator { display: inline-block; margin-left: 5px; font-size: .8em; }
 
 @media (max-width: 767px) {

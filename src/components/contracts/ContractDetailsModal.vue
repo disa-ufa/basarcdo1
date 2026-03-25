@@ -1,4 +1,3 @@
-<!-- src/components/contracts/ContractDetailsModal.vue -->
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import http from '@/api/http'
@@ -10,6 +9,7 @@ const props = defineProps({
   errorDetails: String,
   contractData: Object,
   contractRaw: Object,
+  listContractRow: Object,
   formatDate: Function,
   formatDateTime: Function,
   formatCurrency: Function,
@@ -40,7 +40,13 @@ const rights = ref(readRights())
 const userFilial = ref(normalizeBranch(readUserFilial()))
 
 const canEditOtherFilialData = computed(() => !!rights.value['РедактированиеДанныхЧужогоФилиала'])
-const currentContractBranch = computed(() => normalizeBranch(props.contractData?.Филиал || props.contractRaw?.договор?.Филиал))
+const currentContractBranch = computed(() =>
+  normalizeBranch(
+    props.contractData?.Филиал ||
+    props.contractRaw?.договор?.Филиал ||
+    props.listContractRow?.Филиал
+  )
+)
 
 const canEditCurrentContractByBranch = computed(() => {
   if (canEditOtherFilialData.value) return true
@@ -82,6 +88,34 @@ function readUserFilial() {
 
 function normalizeBranch(v) {
   return typeof v === 'string' ? v.trim() : ''
+}
+
+function safeTrim(v) {
+  return v == null ? '' : String(v).trim()
+}
+
+function itemStatusLower(item) {
+  return safeTrim(
+    item?.Статус ??
+    item?.status ??
+    item?.Состояние ??
+    item?.state
+  ).toLowerCase()
+}
+
+function itemWriteOffDate(item) {
+  return safeTrim(
+    item?.ДатаСписания ??
+    item?.dateWriteOff ??
+    item?.writeOffDate
+  )
+}
+
+function isItemWrittenOff(item) {
+  if (!item || typeof item !== 'object') return false
+  const status = itemStatusLower(item)
+  const date = itemWriteOffDate(item)
+  return status.startsWith('списан') || !!date
 }
 
 function refreshAuthContext() {
@@ -134,10 +168,47 @@ function calcTotal(list) {
   return round2(sum)
 }
 
+const contractNumberDisplay = computed(() =>
+  props.contractData?.Номер_Договора ||
+  props.contractData?.Номер ||
+  props.listContractRow?.Номер_Договора ||
+  props.listContractRow?.Номер ||
+  '...'
+)
+
+const contractStatusDisplay = computed(() => {
+  return safeTrim(
+    props.contractData?.Статус ||
+    props.contractRaw?.договор?.Статус ||
+    props.listContractRow?.Статус
+  ) || '—'
+})
+
+const isWrittenOff = computed(() => {
+  return contractStatusDisplay.value.toLowerCase().startsWith('списан')
+})
+
+const contractWriteOffDateRaw = computed(() => {
+  return safeTrim(
+    props.contractData?.ДатаСписания ||
+    props.contractRaw?.договор?.ДатаСписания ||
+    props.listContractRow?.ДатаСписания
+  )
+})
+
+const contractWriteOffDateDisplay = computed(() => {
+  if (!contractWriteOffDateRaw.value) return 'Не указана'
+  return props.formatDate ? props.formatDate(contractWriteOffDateRaw.value) : contractWriteOffDateRaw.value
+})
+
+const showWriteOffDateBlock = computed(() => {
+  return isWrittenOff.value || !!contractWriteOffDateRaw.value
+})
+
 watch(
-  () => [props.visible, props.contractData, props.autoEdit, canEditCurrentContractByBranch.value],
-  async ([v, cd, ae, canEdit]) => {
-    if (v && cd && ae && canEdit) {
+  () => [props.visible, props.contractData, props.autoEdit, canEditCurrentContractByBranch.value, isWrittenOff.value],
+  async ([v, cd, ae, canEdit, writtenOff]) => {
+    if (v && cd && ae && canEdit && !writtenOff) {
       isEditing.value = true
       await startEditing()
     }
@@ -160,6 +231,12 @@ async function startEditing() {
 
   if (!canEditCurrentContractByBranch.value) {
     saveError.value = 'Редактирование договора чужого филиала запрещено.'
+    isEditing.value = false
+    return
+  }
+
+  if (isWrittenOff.value) {
+    saveError.value = 'Списанный договор редактировать нельзя.'
     isEditing.value = false
     return
   }
@@ -201,6 +278,7 @@ function isEquipmentAdded(os) {
 }
 
 function addEquipment(os) {
+  if (!os || isItemWrittenOff(os)) return
   if (!isEquipmentAdded(os)) {
     editedEquipment.value.push({
       ИнвентарныйНомер: os.ИнвентарныйНомер,
@@ -217,6 +295,8 @@ function isMzAdded(mz) {
 }
 
 function addMzToContract(mz) {
+  if (!mz || isItemWrittenOff(mz)) return
+
   const maxCount = (mz.Количество ?? 0) - (mz.КолВДоговорах ?? 0)
   let qty = prompt(`Введите количество (максимум: ${maxCount}):`, 1)
   if (qty === null) return
@@ -293,10 +373,41 @@ function groupKeyOf(g) {
   return (g?.КодПоБгу || g?.Код || `${g?.НаименованиеОС || g?.Наименование || 'Группа'}|${g?.МатериальноОтветственный || ''}`).toString()
 }
 
-function extractInvNumbers(g) {
+function extractAllInvNumbers(g) {
+  const out = new Set()
+
+  const singleInv = safeTrim(g?.ИнвентарныйНомер)
+  if (singleInv) out.add(singleInv)
+
   const arr = g?.ИнвентарныйНомера
-  if (!Array.isArray(arr)) return []
-  return arr.map(x => (x?.ИнвентарныйНомер ?? '').toString().trim()).filter(Boolean)
+  if (Array.isArray(arr)) {
+    for (const x of arr) {
+      const inv = safeTrim(x?.ИнвентарныйНомер ?? x?.Номер ?? x?.number)
+      if (inv) out.add(inv)
+    }
+  }
+
+  return Array.from(out)
+}
+
+function extractInvNumbers(g) {
+  const out = new Set()
+
+  const singleInv = safeTrim(g?.ИнвентарныйНомер)
+  if (singleInv && !isItemWrittenOff(g)) {
+    out.add(singleInv)
+  }
+
+  const arr = g?.ИнвентарныйНомера
+  if (Array.isArray(arr)) {
+    for (const x of arr) {
+      if (isItemWrittenOff(x)) continue
+      const inv = safeTrim(x?.ИнвентарныйНомер ?? x?.Номер ?? x?.number)
+      if (inv) out.add(inv)
+    }
+  }
+
+  return Array.from(out)
 }
 
 function extractUsedInvSet(g) {
@@ -332,6 +443,8 @@ function buildGroupedRows(groups) {
 
   const rows = []
   for (const g of groups) {
+    if (isItemWrittenOff(g)) continue
+
     const gKey = groupKeyOf(g)
     const gCode = (g?.Код ?? '').toString().trim()
     const name = (g.НаименованиеОС || g.Наименование || '').toString()
@@ -362,6 +475,8 @@ function buildGroupedRows(groups) {
       const inContracts = Number(g.КолВДоговорах ?? 0)
       const already = alreadyAddedNoInvQty(gKey)
       const left = Math.max(0, total - inContracts - already)
+
+      if (left <= 0) continue
 
       rows.push({
         kind: 'noinv',
@@ -402,7 +517,7 @@ function enrichEditedWithGroupCodesByInv() {
   for (const g of groupedRaw.value) {
     const gCode = (g?.Код ?? '').toString().trim()
     if (!gCode) continue
-    for (const inv of extractInvNumbers(g)) {
+    for (const inv of extractAllInvNumbers(g)) {
       if (inv) inv2code.set(inv, gCode)
     }
   }
@@ -431,6 +546,7 @@ function addGroupedRow(row) {
       ГУ_Код: row.groupCode || '',
       __groupKey: row.groupKey
     })
+    groupedRows.value = buildGroupedRows(groupedRaw.value)
     return
   }
 
@@ -459,6 +575,7 @@ function addGroupedRow(row) {
 const filteredAvailableOs = computed(() => {
   const q = searchOs.value.toLowerCase()
   return availableOs.value
+    .filter(os => !isItemWrittenOff(os))
     .filter(os => !isEquipmentAdded(os))
     .filter(os =>
       !q ||
@@ -471,6 +588,7 @@ const filteredAvailableMz = computed(() => {
   const q = searchMz.value.toLowerCase()
   const mols = filialMols.value.map(m => (m || '').trim())
   return availableMz.value
+    .filter(mz => !isItemWrittenOff(mz))
     .filter(mz => showHoz.value || !mz.Хоз)
     .filter(mz => (mz.Количество ?? 0) > (mz.КолВДоговорах ?? 0))
     .filter(mz => mols.includes((mz.МатериальноОтветственный || '').trim()))
@@ -503,6 +621,11 @@ async function saveEdit() {
 
   if (!canEditCurrentContractByBranch.value) {
     saveError.value = 'Редактирование договора чужого филиала запрещено.'
+    return
+  }
+
+  if (isWrittenOff.value) {
+    saveError.value = 'Списанный договор редактировать нельзя.'
     return
   }
 
@@ -568,7 +691,7 @@ onBeforeUnmount(() => {
     <div class="modal-content" style="min-width: 600px">
       <button @click="onClose" class="modal-close-button">&times;</button>
 
-      <h3>Содержимое договора №{{ contractData?.Номер_Договора || contractData?.Номер || '...' }}</h3>
+      <h3>Содержимое договора №{{ contractNumberDisplay }}</h3>
 
       <div v-if="!isEditing">
         <div v-if="loading" class="loading-indicator modal-loading">
@@ -587,6 +710,21 @@ onBeforeUnmount(() => {
           <p><strong>Пользователь:</strong> {{ contractData.Пользователь }}</p>
           <p><strong>ФИО:</strong> {{ contractData.ФИО }}</p>
           <p><strong>Филиал:</strong> {{ contractData.Филиал }}</p>
+
+          <p>
+            <strong>Статус:</strong>
+            <span :class="['status-chip', { 'status-chip--writtenoff': isWrittenOff }]">
+              {{ contractStatusDisplay }}
+            </span>
+          </p>
+
+          <p v-if="showWriteOffDateBlock">
+            <strong>Дата списания:</strong> {{ contractWriteOffDateDisplay }}
+          </p>
+
+          <div v-if="isWrittenOff" class="writtenoff-note">
+            Договор отмечен как списанный выпускникам.
+          </div>
 
           <h4>Состав оборудования ({{ contractData.КоличествоОборудования || 0 }} шт.)</h4>
           <div v-if="contractData.СоставОборудования && contractData.СоставОборудования.length > 0" class="equipment-list">
@@ -630,13 +768,21 @@ onBeforeUnmount(() => {
           <p><small>Данные на: {{ formatDateTime(contractRaw?.датаФормирования) }}</small></p>
 
           <button
-            v-if="canEditCurrentContractByBranch"
+            v-if="canEditCurrentContractByBranch && !isWrittenOff"
             @click="startEditing"
             class="retry-button"
             style="margin-top: 20px;"
           >
             Редактировать
           </button>
+
+          <p
+            v-else-if="canEditCurrentContractByBranch && isWrittenOff"
+            style="margin-top: 16px; color: #8b1e3f; font-weight: 600;"
+          >
+            Списанный договор редактировать нельзя.
+          </p>
+
           <p
             v-else
             style="margin-top: 16px; color: #6b7280;"
@@ -822,4 +968,27 @@ onBeforeUnmount(() => {
 .equipment-editor th, .equipment-editor td { border:1px solid #ddd; padding:5px 7px; text-align:left; font-size:14px; }
 .equipment-editor th { background:#f3f3f3; }
 .active { background:#eaf6fd; color:#333; font-weight:bold; }
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f1f3f5;
+  color: #495057;
+  font-weight: 600;
+}
+.status-chip--writtenoff {
+  background: #f8d7da;
+  color: #8b1e3f;
+}
+.writtenoff-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e9a8b4;
+  background: #fdecef;
+  border-radius: 8px;
+  color: #8b1e3f;
+}
 </style>

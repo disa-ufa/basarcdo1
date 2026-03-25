@@ -1,4 +1,3 @@
-<!-- src/components/contracts/TableContracts.vue -->
 <template>
   <div>
     <h2>Список договоров</h2>
@@ -42,6 +41,11 @@
           <option v-for="branch in filterBranchesList" :key="branch" :value="branch">{{ branch }}</option>
         </select>
       </div>
+
+      <label class="checkbox-container">
+        <input v-model="showWrittenOff" type="checkbox">
+        <span>Показать списано выпускникам</span>
+      </label>
     </div>
 
     <DataTableRed
@@ -61,6 +65,7 @@
       :errorDetails="modalErrorDetails"
       :contractData="modalContractData"
       :contractRaw="modalContractRaw"
+      :listContractRow="currentContractRow"
       :formatDate="formatDate"
       :formatDateTime="formatDateTime"
       :formatCurrency="formatCurrency"
@@ -110,6 +115,18 @@ function normalizeBranchName(v) {
   return typeof v === 'string' ? v.trim() : ''
 }
 
+function safeTrim(v) {
+  return v == null ? '' : String(v).trim()
+}
+
+function normalizeStatus(v) {
+  return safeTrim(v)
+}
+
+function isWrittenOffStatus(status) {
+  return normalizeStatus(status).toLowerCase().startsWith('списан')
+}
+
 export default {
   name: 'TableContracts',
   components: { DataTableRed, ContractDetailsModal, AddContractModal },
@@ -133,6 +150,7 @@ export default {
     const usersList = ref(['Все'])
     const selectedBranch = ref('Все')
     const branchesList = ref(['Все'])
+    const showWrittenOff = ref(false)
 
     const showAddModal = ref(false)
 
@@ -144,6 +162,7 @@ export default {
     const modalContractData = computed(() => modalContractRaw.value?.договор || null)
     const autoEdit = ref(false)
     const currentContractNumber = ref(null)
+    const currentContractRow = ref(null)
 
     const rights = ref(readRights())
     const userFilial = ref(normalizeBranchName(readUserFilial()))
@@ -215,8 +234,10 @@ export default {
       for (const c of contracts.value) {
         const branch = normalizeBranchName(c?.Филиал)
         const userName = c?.Пользователь ? String(c.Пользователь).trim() : ''
+        const byWrittenOff = showWrittenOff.value || !c?.isWrittenOff
 
         if (!userName) continue
+        if (!byWrittenOff) continue
         if (activeBranchFilter.value !== 'Все' && branch !== activeBranchFilter.value) continue
 
         userSet.add(userName)
@@ -276,19 +297,28 @@ export default {
         selectedBranch.value = 'Все'
 
         const { data } = await http.get('/RCDO/hs/rcdo/ucenicidogovora')
-        if (data && Array.isArray(data.договоры)) {
+        const parsed = typeof data === 'string' ? JSON.parse(data) : data
+
+        if (parsed && Array.isArray(parsed.договоры)) {
           const uniqueUsers = new Set()
           const uniqueBranches = new Set()
 
-          contracts.value = data.договоры.map((c) => {
+          contracts.value = parsed.договоры.map((c) => {
             const userName = c.Пользователь ? String(c.Пользователь).trim() : 'Не указан'
             const branchName = c.Филиал ? String(c.Филиал).trim() : 'Не указан'
+            const status = normalizeStatus(c.Статус)
+            const writeOffDate = safeTrim(c.ДатаСписания)
+            const isWrittenOff = isWrittenOffStatus(status)
 
             if (c?.Пользователь) uniqueUsers.add(userName)
             if (c?.Филиал) uniqueBranches.add(branchName)
 
             return {
               ...c,
+              Статус: status,
+              ДатаСписания: writeOffDate,
+              isWrittenOff,
+              rowClass: isWrittenOff ? 'contract-writtenoff-row' : '',
               Дата_Подписания: formatDate(c.Дата_Подписания),
               Пользователь: userName,
               Филиал: branchName
@@ -375,6 +405,7 @@ export default {
         alert('Ошибка: не удалось определить номер договора.')
         return
       }
+      currentContractRow.value = row ? { ...row } : null
       autoEdit.value = false
       fetchContractDetails(num)
     }
@@ -391,6 +422,7 @@ export default {
       modalError.value = ''
       modalErrorDetails.value = ''
       modalContractRaw.value = null
+      currentContractRow.value = null
       autoEdit.value = false
     }
 
@@ -399,6 +431,7 @@ export default {
       await fetchContracts()
       if (createdNumber != null) {
         autoEdit.value = true
+        currentContractRow.value = null
         fetchContractDetails(createdNumber)
       }
     }
@@ -407,7 +440,8 @@ export default {
       return contracts.value.filter((c) => {
         const okUser = selectedUser.value === 'Все' || c.Пользователь === selectedUser.value
         const okBranch = activeBranchFilter.value === 'Все' || c.Филиал === activeBranchFilter.value
-        return okUser && okBranch
+        const okWrittenOff = showWrittenOff.value || !c.isWrittenOff
+        return okUser && okBranch && okWrittenOff
       })
     })
 
@@ -449,6 +483,7 @@ export default {
       modalContractRaw,
       modalContractData,
       autoEdit,
+      currentContractRow,
       handleOpenContractModal,
       retryFetchContractDetails,
       closeModal,
@@ -457,7 +492,8 @@ export default {
       formatCurrency,
       onSortChanged,
       canEditOtherFilialData,
-      userFilial
+      userFilial,
+      showWrittenOff
     }
   }
 }
@@ -481,4 +517,20 @@ export default {
 .filter-container { padding:10px; background:#e9ecef; border-radius:4px; display:flex; align-items:center; gap:10px; flex:1; min-width:250px }
 .filter-container label { font-weight:700; color:#495057; white-space:nowrap }
 .filter-container select { padding:5px 8px; border:1px solid #ced4da; border-radius:4px; flex:1; min-width:150px }
+
+.checkbox-container {
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:10px 12px;
+  background:#e9ecef;
+  border-radius:4px;
+  color:#495057;
+  font-weight:700;
+  user-select:none;
+  cursor:pointer;
+}
+.checkbox-container input {
+  margin:0;
+}
 </style>

@@ -12,10 +12,7 @@
       <button @click="fetchAll" class="retry-button">Попробовать снова</button>
     </div>
 
-    <div
-      class="filter-row"
-      v-if="!loading && !error && (filteredResponsiblePersonsList.length > 1 || filterFilialList.length > 0)"
-    >
+    <div class="filter-row" v-if="!loading && !error">
       <div class="filter-inline" v-if="filteredResponsiblePersonsList.length > 1">
         <label for="responsible-filter">Ответственный:</label>
         <select id="responsible-filter" v-model="selectedResponsiblePerson">
@@ -37,6 +34,11 @@
           </option>
         </select>
       </div>
+
+      <label class="checkbox-inline">
+        <input v-model="showWrittenOff" type="checkbox">
+        <span>Показать списанные</span>
+      </label>
     </div>
 
     <DataTable
@@ -122,6 +124,7 @@ export default {
     const responsiblePersonsList = ref(['Все'])
     const selectedFilial = ref('Все')
     const filialList = ref(['Все'])
+    const showWrittenOff = ref(false)
 
     const rights = ref(readRights())
     const userFilial = ref(normalizeBranchName(readUserFilial()))
@@ -135,6 +138,112 @@ export default {
     const formatMoney = (val) => moneyFormatter.format(Number(val || 0))
 
     const safeTrim = (v) => (v == null ? '' : String(v)).trim()
+
+    const normalizeStatus = (v) => safeTrim(v)
+    const isWrittenOffStatus = (status) => normalizeStatus(status).toLowerCase().startsWith('списан')
+    const buildRowClasses = (...classes) => classes.filter(Boolean).join(' ')
+
+    const normalizeGuInventoryNumbers = (arr) => {
+      if (!Array.isArray(arr)) return []
+
+      return arr
+        .map((r) => {
+          const inv = safeTrim(r?.ИнвентарныйНомер || r?.Номер || r)
+          const status = normalizeStatus(r?.Статус)
+          const writeOffDate = safeTrim(r?.ДатаСписания)
+
+          return {
+            ...(r && typeof r === 'object' ? r : {}),
+            ИнвентарныйНомер: inv,
+            Статус: status,
+            ДатаСписания: writeOffDate,
+            isWrittenOff: isWrittenOffStatus(status)
+          }
+        })
+        .filter((r) => r.ИнвентарныйНомер || r.Статус || r.ДатаСписания)
+    }
+
+    const summarizeGroupInventoryStatus = (entries, fallbackStatus = '', fallbackDate = '') => {
+      const normalizedEntries = Array.isArray(entries) ? entries : []
+
+      if (!normalizedEntries.length) {
+        const status = normalizeStatus(fallbackStatus)
+        const date = safeTrim(fallbackDate)
+        const written = isWrittenOffStatus(status)
+        return {
+          status,
+          date,
+          isWrittenOff: written,
+          hasWrittenOffPart: written,
+          writtenOffCount: written ? 1 : 0,
+          activeCount: written ? 0 : 1
+        }
+      }
+
+      const writtenOffEntries = normalizedEntries.filter((e) => e?.isWrittenOff)
+      const activeEntries = normalizedEntries.filter((e) => !e?.isWrittenOff)
+
+      let status = ''
+      if (writtenOffEntries.length > 0 && activeEntries.length === 0) {
+        status = 'Списан'
+      } else if (writtenOffEntries.length > 0 && activeEntries.length > 0) {
+        status = 'Частично списан'
+      }
+
+      let date = ''
+      const uniqueDates = [...new Set(
+        writtenOffEntries
+          .map((e) => safeTrim(e?.ДатаСписания))
+          .filter(Boolean)
+      )]
+
+      if (uniqueDates.length === 1) {
+        date = uniqueDates[0]
+      } else if (uniqueDates.length > 1) {
+        date = uniqueDates.join(', ')
+      }
+
+      return {
+        status,
+        date,
+        isWrittenOff: writtenOffEntries.length > 0 && activeEntries.length === 0,
+        hasWrittenOffPart: writtenOffEntries.length > 0,
+        writtenOffCount: writtenOffEntries.length,
+        activeCount: activeEntries.length
+      }
+    }
+
+    const buildOsClientKey = (type, item, invEntries = []) => {
+      const itemType = safeTrim(type || item?.ТипУчета || 'Обычный')
+      const code = safeTrim(item?.Код)
+      const filial = safeTrim(item?.Филиал)
+      const responsible = safeTrim(item?.МатериальноОтветственный)
+      const name = safeTrim(item?.НаименованиеОС || item?.Наименование)
+      const invRaw = safeTrim(item?._invRaw || item?.ИнвентарныйНомер)
+
+      if (itemType === 'Групповой') {
+        const invList = Array.isArray(invEntries) && invEntries.length
+          ? invEntries.map((x) => safeTrim(x?.ИнвентарныйНомер || x?.Номер || x)).filter(Boolean)
+          : []
+
+        return [
+          'group',
+          code,
+          filial,
+          responsible,
+          name,
+          invList.join('|')
+        ].join('::')
+      }
+
+      return [
+        'single',
+        code,
+        filial,
+        responsible,
+        invRaw
+      ].join('::')
+    }
 
     const refreshAuthContext = () => {
       rights.value = readRights()
@@ -179,8 +288,10 @@ export default {
       for (const item of osItems.value) {
         const filial = normalizeBranchName(item?.Филиал)
         const resp = item?.МатериальноОтветственный ? String(item.МатериальноОтветственный).trim() : ''
+        const byWrittenOff = showWrittenOff.value || !item?.isWrittenOff
 
         if (!resp) continue
+        if (!byWrittenOff) continue
         if (activeFilialFilter.value !== 'Все' && filial !== activeFilialFilter.value) continue
 
         set.add(resp)
@@ -260,10 +371,14 @@ export default {
         })
     }
 
-    const buildGroupedInvAndLocation = (groupItem) => {
+    const buildGroupedInvAndLocation = (groupItem, inventoryEntries = null) => {
       let invList = []
 
-      if (Array.isArray(groupItem?.ИнвентарныйНомера) && groupItem.ИнвентарныйНомера.length > 0) {
+      if (Array.isArray(inventoryEntries) && inventoryEntries.length > 0) {
+        invList = inventoryEntries
+          .map((n) => safeTrim(n?.ИнвентарныйНомер || n?.Номер || ''))
+          .filter(Boolean)
+      } else if (Array.isArray(groupItem?.ИнвентарныйНомера) && groupItem.ИнвентарныйНомера.length > 0) {
         invList = groupItem.ИнвентарныйНомера
           .map((n) => safeTrim(n?.ИнвентарныйНомер || n?.Номер || ''))
           .filter(Boolean)
@@ -324,6 +439,48 @@ export default {
       return { invList, invDisplay, mestoDisplay, allUndef }
     }
 
+    const materializeGroupedItemForDisplay = (item) => {
+      const allInvEntries = Array.isArray(item?._groupInvEntriesAll)
+        ? item._groupInvEntriesAll
+        : normalizeGuInventoryNumbers(item?.ИнвентарныйНомера || [])
+
+      const visibleInvEntries = showWrittenOff.value
+        ? allInvEntries
+        : allInvEntries.filter((e) => !e.isWrittenOff)
+
+      if (allInvEntries.length > 0 && visibleInvEntries.length === 0 && !showWrittenOff.value) {
+        return null
+      }
+
+      const built = buildGroupedInvAndLocation(item, visibleInvEntries)
+      const summary = summarizeGroupInventoryStatus(
+        showWrittenOff.value ? allInvEntries : visibleInvEntries,
+        item?.Статус,
+        item?.ДатаСписания
+      )
+
+      const rowClass = buildRowClasses(
+        'os-group-row',
+        built.allUndef ? 'os-missing-row' : '',
+        showWrittenOff.value && summary.hasWrittenOffPart ? 'os-writtenoff-row' : ''
+      )
+
+      return {
+        ...item,
+        _rowClientKey: safeTrim(item?._rowClientKey) || buildOsClientKey('Групповой', item, allInvEntries),
+        ИнвентарныйНомера: visibleInvEntries,
+        _groupInvEntriesVisible: visibleInvEntries,
+        ИнвентарныйНомер: built.invDisplay,
+        Местонахождение: built.mestoDisplay,
+        _invList: built.invList,
+        Статус: summary.status,
+        ДатаСписания: summary.date,
+        isWrittenOff: summary.isWrittenOff,
+        hasWrittenOffPart: summary.hasWrittenOffPart,
+        rowClass
+      }
+    }
+
     const fetchOS = async () => {
       try {
         loading.value = true
@@ -356,6 +513,9 @@ export default {
           uniqueFilials.add(filial)
 
           const invRaw = safeTrim(item.ИнвентарныйНомер)
+          const status = normalizeStatus(item.Статус)
+          const writeOffDate = safeTrim(item.ДатаСписания)
+          const isWrittenOff = isWrittenOffStatus(status)
 
           let mesto = '—'
           if (item.Договор && safeTrim(item.Договор) !== '' && String(item.Договор) !== '0') {
@@ -366,10 +526,16 @@ export default {
 
           const noDogovor = !item.Договор || Number(item.Договор) === 0
           const noInoe = !item.ИноеМестоНахождения || safeTrim(item.ИноеМестоНахождения) === ''
-          const rowClass = noDogovor && noInoe ? 'os-missing-row' : ''
+          const rowClass = buildRowClasses(
+            noDogovor && noInoe ? 'os-missing-row' : '',
+            isWrittenOff ? 'os-writtenoff-row' : ''
+          )
 
           return {
             ...item,
+            Статус: status,
+            ДатаСписания: writeOffDate,
+            isWrittenOff,
             НаименованиеОС: safeTrim(item.НаименованиеОС) || safeTrim(item.Наименование) || 'Без наименования',
             ИнвентарныйНомер: invRaw || 'Нет номера',
             _invRaw: invRaw,
@@ -378,6 +544,7 @@ export default {
             Филиал: filial,
             Местонахождение: mesto,
             ТипУчета: 'Обычный',
+            _rowClientKey: buildOsClientKey('Обычный', { ...item, Филиал: filial, МатериальноОтветственный: responsible, _invRaw: invRaw }),
             rowClass
           }
         })
@@ -403,26 +570,43 @@ export default {
             uniqueResponsible.add(responsible)
             uniqueFilials.add(filial)
 
-            const built = buildGroupedInvAndLocation(item)
+            const allInvEntries = normalizeGuInventoryNumbers(item?.ИнвентарныйНомера || [])
+            const builtAll = buildGroupedInvAndLocation(item, allInvEntries)
+            const summaryAll = summarizeGroupInventoryStatus(
+              allInvEntries,
+              item?.Статус,
+              item?.ДатаСписания
+            )
 
-            built.invList
-              .map((x) => safeTrim(x))
+            allInvEntries
+              .map((x) => safeTrim(x?.ИнвентарныйНомер))
               .filter((x) => x && x !== 'Без номера' && x !== 'Нет номера')
               .forEach((n) => groupedInvSet.add(n))
 
-            const rowClass = `os-group-row${built.allUndef ? ' os-missing-row' : ''}`
+            const rowClass = buildRowClasses(
+              'os-group-row',
+              builtAll.allUndef ? 'os-missing-row' : '',
+              summaryAll.hasWrittenOffPart ? 'os-writtenoff-row' : ''
+            )
 
             return {
               ...item,
+              Статус: summaryAll.status,
+              ДатаСписания: summaryAll.date,
+              isWrittenOff: summaryAll.isWrittenOff,
+              hasWrittenOffPart: summaryAll.hasWrittenOffPart,
               ВДоговорах: normalizeGuVDogovorah(item?.ВДоговорах || []),
+              ИнвентарныйНомера: allInvEntries,
+              _groupInvEntriesAll: allInvEntries,
               НаименованиеОС: safeTrim(item.НаименованиеОС) || safeTrim(item.Наименование) || 'Без наименования',
-              ИнвентарныйНомер: built.invDisplay,
-              Местонахождение: built.mestoDisplay,
-              _invList: built.invList,
+              ИнвентарныйНомер: builtAll.invDisplay,
+              Местонахождение: builtAll.mestoDisplay,
+              _invList: builtAll.invList,
               СтоимостьПоследняя: formatMoney(item.СтоимостьПоследняя),
               МатериальноОтветственный: responsible,
               Филиал: filial,
               ТипУчета: 'Групповой',
+              _rowClientKey: buildOsClientKey('Групповой', { ...item, Филиал: filial, МатериальноОтветственный: responsible }, allInvEntries),
               rowClass,
               Договор: 0
             }
@@ -498,17 +682,28 @@ export default {
     })
 
     const filteredOsItems = computed(() => {
-      return osItems.value.filter((item) => {
-        const byResp =
-          selectedResponsiblePerson.value === 'Все' ||
-          item.МатериальноОтветственный === selectedResponsiblePerson.value
+      return osItems.value
+        .filter((item) => {
+          const byResp =
+            selectedResponsiblePerson.value === 'Все' ||
+            item.МатериальноОтветственный === selectedResponsiblePerson.value
 
-        const byFilial =
-          activeFilialFilter.value === 'Все' ||
-          item.Филиал === activeFilialFilter.value
+          const byFilial =
+            activeFilialFilter.value === 'Все' ||
+            item.Филиал === activeFilialFilter.value
 
-        return byResp && byFilial
-      })
+          const byWrittenOff =
+            showWrittenOff.value || !item.isWrittenOff
+
+          return byResp && byFilial && byWrittenOff
+        })
+        .map((item) => {
+          if (item?.ТипУчета === 'Групповой') {
+            return materializeGroupedItemForDisplay(item)
+          }
+          return item
+        })
+        .filter(Boolean)
     })
 
     const filteredOsItemsWithIndex = computed(() =>
@@ -524,7 +719,7 @@ export default {
     const dogovorLoading = ref(false)
 
     const handleRowClick = async (row) => {
-      selectedOS.value = row
+      selectedOS.value = { ...row }
       showModal.value = true
       selectedDogovor.value = null
 
@@ -544,8 +739,21 @@ export default {
       }
     }
 
-    const handleInoeUpdated = ({ Код, ИноеМестоНахождения }) => {
-      const idx = osItems.value.findIndex((os) => os.Код === Код)
+    const findOsIndexForUpdate = (payload) => {
+      const rowClientKey = safeTrim(payload?._rowClientKey)
+      if (rowClientKey) {
+        const byClientKey = osItems.value.findIndex((os) => safeTrim(os?._rowClientKey) === rowClientKey)
+        if (byClientKey !== -1) return byClientKey
+      }
+
+      const code = safeTrim(payload?.Код)
+      if (!code) return -1
+
+      return osItems.value.findIndex((os) => safeTrim(os?.Код) === code)
+    }
+
+    const handleInoeUpdated = ({ Код, _rowClientKey, ИноеМестоНахождения }) => {
+      const idx = findOsIndexForUpdate({ Код, _rowClientKey })
       if (idx !== -1) {
         const cur = { ...osItems.value[idx] }
         cur.ИноеМестоНахождения = ИноеМестоНахождения
@@ -560,33 +768,56 @@ export default {
 
         const noDogovor = !cur.Договор || Number(cur.Договор) === 0
         const noInoe = !ИноеМестоНахождения || String(ИноеМестоНахождения).trim() === ''
-        cur.rowClass = noDogovor && noInoe ? 'os-missing-row' : ''
+        cur.rowClass = buildRowClasses(
+          noDogovor && noInoe ? 'os-missing-row' : '',
+          isWrittenOffStatus(cur.Статус) ? 'os-writtenoff-row' : ''
+        )
 
         osItems.value.splice(idx, 1, cur)
 
-        if (selectedOS.value && selectedOS.value.Код === Код) {
+        if (selectedOS.value && safeTrim(selectedOS.value._rowClientKey) === safeTrim(cur._rowClientKey)) {
           selectedOS.value = { ...selectedOS.value, ...cur }
         }
       }
     }
 
-    const handleGuUpdated = ({ Код, ВДоговорах }) => {
-      const idx = osItems.value.findIndex((os) => os.Код === Код)
+    const handleGuUpdated = ({ Код, _rowClientKey, ВДоговорах }) => {
+      const idx = findOsIndexForUpdate({ Код, _rowClientKey })
       if (idx === -1) return
 
       const cur = { ...osItems.value[idx] }
       cur.ВДоговорах = normalizeGuVDogovorah(ВДоговорах)
 
-      const built = buildGroupedInvAndLocation(cur)
-      cur.ИнвентарныйНомер = built.invDisplay
-      cur.Местонахождение = built.mestoDisplay
-      cur._invList = built.invList
-      cur.rowClass = `os-group-row${built.allUndef ? ' os-missing-row' : ''}`
+      const allInvEntries = Array.isArray(cur._groupInvEntriesAll)
+        ? cur._groupInvEntriesAll
+        : normalizeGuInventoryNumbers(cur?.ИнвентарныйНомера || [])
+
+      const builtAll = buildGroupedInvAndLocation(cur, allInvEntries)
+      const summaryAll = summarizeGroupInventoryStatus(
+        allInvEntries,
+        cur?.Статус,
+        cur?.ДатаСписания
+      )
+
+      cur.ИнвентарныйНомера = allInvEntries
+      cur._groupInvEntriesAll = allInvEntries
+      cur.ИнвентарныйНомер = builtAll.invDisplay
+      cur.Местонахождение = builtAll.mestoDisplay
+      cur._invList = builtAll.invList
+      cur.Статус = summaryAll.status
+      cur.ДатаСписания = summaryAll.date
+      cur.isWrittenOff = summaryAll.isWrittenOff
+      cur.hasWrittenOffPart = summaryAll.hasWrittenOffPart
+      cur.rowClass = buildRowClasses(
+        'os-group-row',
+        builtAll.allUndef ? 'os-missing-row' : '',
+        summaryAll.hasWrittenOffPart ? 'os-writtenoff-row' : ''
+      )
 
       osItems.value.splice(idx, 1, cur)
 
-      if (selectedOS.value && selectedOS.value.Код === Код) {
-        selectedOS.value = { ...selectedOS.value, ...cur }
+      if (selectedOS.value && safeTrim(selectedOS.value._rowClientKey) === safeTrim(cur._rowClientKey)) {
+        selectedOS.value = materializeGroupedItemForDisplay(cur)
       }
     }
 
@@ -602,6 +833,7 @@ export default {
       fetchAll,
       selectedResponsiblePerson,
       selectedFilial,
+      showWrittenOff,
       filteredResponsiblePersonsList,
       filterFilialList,
       filteredOsItemsWithIndex,
@@ -684,6 +916,7 @@ export default {
   padding: 10px;
   background-color: #e9ecef;
   border-radius: 4px;
+  flex-wrap: wrap;
 }
 .filter-inline {
   display: flex;
@@ -700,6 +933,18 @@ export default {
   border-radius: 4px;
   min-width: 180px;
 }
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: bold;
+  color: #495057;
+  cursor: pointer;
+  user-select: none;
+}
+.checkbox-inline input {
+  margin: 0;
+}
 h2 {
   margin-bottom: 20px;
   color: #333;
@@ -712,6 +957,16 @@ h2 {
 }
 .os-group-row.os-missing-row {
   background-color: #ffe0e6 !important;
+}
+.os-writtenoff-row {
+  background-color: #f8d7da !important;
+}
+.os-group-row.os-writtenoff-row {
+  background-color: #f8d7da !important;
+}
+.os-missing-row.os-writtenoff-row,
+.os-group-row.os-missing-row.os-writtenoff-row {
+  background-color: #f1bcc3 !important;
 }
 
 :deep(table td),

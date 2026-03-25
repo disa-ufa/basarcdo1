@@ -32,7 +32,14 @@
 
         <h4 class="sub-title">Перемещение (РЦДО)</h4>
         <div class="muted">
-          При нажатии “Провести” — МОЛ в РЦДО будет заменён на МОЛ из БГУ и запишется событие в историю.
+          При нажатии «Провести» МОЛ в РЦДО будет заменён на МОЛ из БГУ,
+          то есть перевод выполняется по схеме:
+          <b>РЦДО → БГУ</b>.
+        </div>
+
+        <div v-if="item" class="muted" style="margin-top: 8px;">
+          Текущее значение: <b>{{ item.МатериальноОтветственныйРЦДО || '—' }}</b>
+          → новое значение: <b>{{ item.МатериальноОтветственный || '—' }}</b>
         </div>
 
         <div v-if="error" class="msg error">{{ error }}</div>
@@ -69,13 +76,13 @@ export default {
   emits: ['close', 'conduct'],
   methods: {
     emitClose() {
-      this.$emit('close');
+      this.$emit('close')
     },
     emitConduct() {
-      this.$emit('conduct', this.item);
+      this.$emit('conduct', this.item)
     }
   }
-};
+}
 </script>
 
 <style scoped>

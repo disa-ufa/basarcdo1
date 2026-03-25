@@ -30,6 +30,25 @@
           <p><b>Ответственный:</b><br> {{ osData.МатериальноОтветственный }}</p>
           <p><b>Филиал:</b><br> {{ osData.Филиал }}</p>
 
+          <p>
+            <b>Статус:</b><br>
+            <span :class="['status-chip', { 'status-chip--writtenoff': hasWrittenOffPart }]">
+              {{ osStatusDisplay }}
+            </span>
+          </p>
+
+          <p v-if="showWriteOffDateBlock">
+            <b>Дата списания:</b><br>
+            <span :class="{ muted: !hasWriteOffDate }">{{ osWriteOffDateDisplay }}</span>
+          </p>
+
+          <div v-if="isWrittenOff" class="writtenoff-note">
+            Оборудование отмечено как списанное.
+          </div>
+          <div v-else-if="hasWrittenOffPart" class="writtenoff-note">
+            В составе групповой позиции есть списанные инвентарные номера.
+          </div>
+
           <p v-if="!canEditCurrentOsByBranch" class="muted" style="margin-top: 10px;">
             Редактирование данных чужого филиала запрещено.
           </p>
@@ -70,15 +89,21 @@
             <table class="group-table">
               <thead>
                 <tr>
-                  <th style="width: 34%;">Инв. номер</th>
-                  <th style="width: 10%;">Кол-во</th>
-                  <th style="width: 22%;">Договор</th>
-                  <th>Иное место</th>
-                  <th style="width: 120px;"></th>
+                  <th style="width: 22%;">Инв. номер</th>
+                  <th style="width: 8%;">Кол-во</th>
+                  <th style="width: 16%;">Договор</th>
+                  <th style="width: 20%;">Иное место</th>
+                  <th style="width: 14%;">Статус</th>
+                  <th style="width: 14%;">Дата списания</th>
+                  <th style="width: 110px;"></th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in groupRows" :key="row._key" :class="{ 'undef-row': row.kind === 'undef' }">
+                <tr
+                  v-for="row in groupRows"
+                  :key="row._key"
+                  :class="[{ 'undef-row': row.kind === 'undef' }, { 'writtenoff-row': row.isWrittenOff }]"
+                >
                   <td class="preline">
                     {{ row.inv ? row.inv : 'Без инв. номера' }}
                   </td>
@@ -104,6 +129,14 @@
                       <span v-else-if="row.kind === 'undef'"><span class="dot">🔴</span> Не определено</span>
                       <span v-else class="muted">—</span>
                     </template>
+                  </td>
+                  <td>
+                    <span v-if="row.status">{{ row.status }}</span>
+                    <span v-else class="muted">—</span>
+                  </td>
+                  <td>
+                    <span v-if="row.writeOffDate">{{ row.writeOffDate }}</span>
+                    <span v-else class="muted">—</span>
                   </td>
                   <td class="actions">
                     <template v-if="row.kind !== 'contract' && !isEditingGroupRow(row) && canEditCurrentOsByBranch">
@@ -275,6 +308,74 @@ export default {
   emits: ['close', 'inoe-updated', 'gu-updated'],
   setup(props, { emit }) {
     const safeTrim = (v) => (v == null ? '' : String(v)).trim()
+    const normalizeStatus = (v) => safeTrim(v)
+    const isWrittenOffStatus = (status) => normalizeStatus(status).toLowerCase().startsWith('списан')
+
+    const normalizeGroupInventoryEntries = (arr) => {
+      if (!Array.isArray(arr)) return []
+
+      return arr
+        .map((r) => {
+          const inv = safeTrim(r?.ИнвентарныйНомер || r?.Номер || r)
+          const status = normalizeStatus(r?.Статус)
+          const writeOffDate = safeTrim(r?.ДатаСписания)
+
+          return {
+            ...(r && typeof r === 'object' ? r : {}),
+            ИнвентарныйНомер: inv,
+            Статус: status,
+            ДатаСписания: writeOffDate,
+            isWrittenOff: isWrittenOffStatus(status)
+          }
+        })
+        .filter((r) => r.ИнвентарныйНомер || r.Статус || r.ДатаСписания)
+    }
+
+    const summarizeGroupEntries = (entries, fallbackStatus = '', fallbackDate = '') => {
+      const normalizedEntries = Array.isArray(entries) ? entries : []
+
+      if (!normalizedEntries.length) {
+        const status = normalizeStatus(fallbackStatus)
+        const date = safeTrim(fallbackDate)
+        const written = isWrittenOffStatus(status)
+        return {
+          status,
+          date,
+          isWrittenOff: written,
+          hasWrittenOffPart: written
+        }
+      }
+
+      const writtenOffEntries = normalizedEntries.filter((e) => e?.isWrittenOff)
+      const activeEntries = normalizedEntries.filter((e) => !e?.isWrittenOff)
+
+      let status = ''
+      if (writtenOffEntries.length > 0 && activeEntries.length === 0) {
+        status = 'Списан'
+      } else if (writtenOffEntries.length > 0 && activeEntries.length > 0) {
+        status = 'Частично списан'
+      }
+
+      let date = ''
+      const uniqueDates = [...new Set(
+        writtenOffEntries
+          .map((e) => safeTrim(e?.ДатаСписания))
+          .filter(Boolean)
+      )]
+
+      if (uniqueDates.length === 1) {
+        date = uniqueDates[0]
+      } else if (uniqueDates.length > 1) {
+        date = uniqueDates.join(', ')
+      }
+
+      return {
+        status,
+        date,
+        isWrittenOff: writtenOffEntries.length > 0 && activeEntries.length === 0,
+        hasWrittenOffPart: writtenOffEntries.length > 0
+      }
+    }
 
     const rights = ref(readRights())
     const userFilial = ref(readUserFilial() || '')
@@ -299,6 +400,8 @@ export default {
     function onAuthRelatedChange() {
       refreshAuthContext()
     }
+
+    const currentRowClientKey = computed(() => safeTrim(props.osData?._rowClientKey))
 
     const isGrouped = computed(() => {
       const t = safeTrim(props.osData?.ТипУчета)
@@ -334,6 +437,54 @@ export default {
           return Boolean(inv || inoe || ndOk)
         })
     }
+
+    const groupInvEntries = computed(() => {
+      if (Array.isArray(props.osData?._groupInvEntriesVisible) && props.osData._groupInvEntriesVisible.length) {
+        return normalizeGroupInventoryEntries(props.osData._groupInvEntriesVisible)
+      }
+      if (Array.isArray(props.osData?.ИнвентарныйНомера) && props.osData.ИнвентарныйНомера.length) {
+        return normalizeGroupInventoryEntries(props.osData.ИнвентарныйНомера)
+      }
+      if (Array.isArray(props.osData?._groupInvEntriesAll) && props.osData._groupInvEntriesAll.length) {
+        return normalizeGroupInventoryEntries(props.osData._groupInvEntriesAll)
+      }
+      return []
+    })
+
+    const groupStatusSummary = computed(() =>
+      summarizeGroupEntries(groupInvEntries.value, props.osData?.Статус, props.osData?.ДатаСписания)
+    )
+
+    const osStatusDisplay = computed(() => {
+      if (isGrouped.value) {
+        return groupStatusSummary.value.status || '—'
+      }
+      return safeTrim(props.osData?.Статус) || '—'
+    })
+
+    const isWrittenOff = computed(() => {
+      if (isGrouped.value) return groupStatusSummary.value.isWrittenOff
+      return osStatusDisplay.value.toLowerCase().startsWith('списан')
+    })
+
+    const hasWrittenOffPart = computed(() => {
+      if (isGrouped.value) return groupStatusSummary.value.hasWrittenOffPart
+      return isWrittenOff.value
+    })
+
+    const hasWriteOffDate = computed(() => {
+      if (isGrouped.value) return safeTrim(groupStatusSummary.value.date) !== ''
+      return safeTrim(props.osData?.ДатаСписания) !== ''
+    })
+
+    const osWriteOffDateDisplay = computed(() => {
+      if (isGrouped.value) {
+        return safeTrim(groupStatusSummary.value.date) || 'Не указана'
+      }
+      return safeTrim(props.osData?.ДатаСписания) || 'Не указана'
+    })
+
+    const showWriteOffDateBlock = computed(() => hasWrittenOffPart.value || hasWriteOffDate.value)
 
     const editMode = ref(false)
     const editInoe = ref('')
@@ -388,6 +539,12 @@ export default {
     const groupErrorMsg = ref('')
 
     const groupInvList = computed(() => {
+      if (groupInvEntries.value.length) {
+        return groupInvEntries.value
+          .map((entry) => safeTrim(entry?.ИнвентарныйНомер))
+          .filter(Boolean)
+      }
+
       const d = props.osData || {}
 
       if (Array.isArray(d._invList) && d._invList.length) {
@@ -407,6 +564,16 @@ export default {
         .map(s => safeTrim(s.replace('🔴', '')))
         .filter(Boolean)
         .filter(s => s !== 'Групповой учёт' && s !== 'Групповой учет')
+    })
+
+    const groupInvMetaMap = computed(() => {
+      const map = new Map()
+      for (const entry of groupInvEntries.value) {
+        const inv = safeTrim(entry?.ИнвентарныйНомер)
+        if (!inv) continue
+        map.set(inv, entry)
+      }
+      return map
     })
 
     const groupTotalQty = computed(() => Number(props.osData?.Количество || 0))
@@ -451,12 +618,14 @@ export default {
     const groupRows = computed(() => {
       const rows = []
       const normalized = normalizeVD(groupVDogovorah.value)
+      const invMetaMap = groupInvMetaMap.value
 
       normalized.forEach((r, idx) => {
         const inv = safeTrim(r?.ИнвентарныйНомер)
         const qty = Number(r?.Количество || 0) || 0
         const nd = safeTrim(r?.НомерДоговора)
         const inoe = safeTrim(r?.ИноеМестоНахождения)
+        const meta = invMetaMap.get(inv) || {}
 
         let kind = 'undef'
         let contractNo = ''
@@ -476,7 +645,10 @@ export default {
           qty,
           kind,
           contractNo,
-          inoe
+          inoe,
+          status: safeTrim(meta?.Статус),
+          writeOffDate: safeTrim(meta?.ДатаСписания),
+          isWrittenOff: !!meta?.isWrittenOff
         })
       })
 
@@ -490,6 +662,7 @@ export default {
       const missingInvs = invs.filter(inv => inv && !usedInv.has(inv))
 
       missingInvs.forEach((inv) => {
+        const meta = invMetaMap.get(inv) || {}
         rows.push({
           _key: `syn:undefinv:${inv}`,
           src: 'synthetic',
@@ -497,7 +670,10 @@ export default {
           qty: 1,
           kind: 'undef',
           contractNo: '',
-          inoe: ''
+          inoe: '',
+          status: safeTrim(meta?.Статус),
+          writeOffDate: safeTrim(meta?.ДатаСписания),
+          isWrittenOff: !!meta?.isWrittenOff
         })
       })
 
@@ -513,7 +689,10 @@ export default {
           qty: remainder,
           kind: 'undef',
           contractNo: '',
-          inoe: ''
+          inoe: '',
+          status: '',
+          writeOffDate: '',
+          isWrittenOff: false
         })
       }
 
@@ -607,7 +786,11 @@ export default {
           groupVDogovorah.value = normalizeVD(groupVDogovorah.value)
         }
 
-        emit('gu-updated', { Код: props.osData.Код, ВДоговорах: groupVDogovorah.value })
+        emit('gu-updated', {
+          Код: props.osData.Код,
+          _rowClientKey: currentRowClientKey.value,
+          ВДоговорах: groupVDogovorah.value
+        })
 
         cancelGroupEdit()
       } catch (e) {
@@ -684,7 +867,11 @@ export default {
           await loadOsHistory(props.osData.ИнвентарныйНомер)
         }
 
-        emit('inoe-updated', { Код: props.osData.Код, ИноеМестоНахождения: editInoe.value })
+        emit('inoe-updated', {
+          Код: props.osData.Код,
+          _rowClientKey: currentRowClientKey.value,
+          ИноеМестоНахождения: editInoe.value
+        })
         editMode.value = false
       } catch (e) {
         errorMsg.value = 'Ошибка при сохранении: ' + (e.response?.data || e.message)
@@ -749,6 +936,13 @@ export default {
       isGrouped,
       canEditCurrentOsByBranch,
 
+      osStatusDisplay,
+      isWrittenOff,
+      hasWrittenOffPart,
+      hasWriteOffDate,
+      osWriteOffDateDisplay,
+      showWriteOffDateBlock,
+
       editMode,
       editInoe,
       saving,
@@ -795,7 +989,7 @@ export default {
 }
 .os-side-panel {
   background: #fff;
-  width: 650px;
+  width: 760px;
   max-width: 100vw;
   height: 100vh;
   box-shadow: -2px 0 24px rgba(0,0,0,0.13);
@@ -825,6 +1019,29 @@ export default {
 .preline { white-space: pre-line; }
 .muted { color: #7a7a7a; }
 .dot { margin-right: 6px; }
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f1f3f5;
+  color: #495057;
+  font-weight: 600;
+}
+.status-chip--writtenoff {
+  background: #f8d7da;
+  color: #8b1e3f;
+}
+.writtenoff-note {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e9a8b4;
+  background: #fdecef;
+  border-radius: 8px;
+  color: #8b1e3f;
+}
 
 .small-spinner {
   display: inline-block;
@@ -917,6 +1134,9 @@ export default {
 }
 .undef-row {
   background: rgba(255, 224, 230, 0.45);
+}
+.writtenoff-row {
+  background: rgba(248, 215, 218, 0.7);
 }
 .actions { text-align: right; }
 .row-edit-actions {
