@@ -2,7 +2,6 @@
   <div>
     <h2>Список учителей</h2>
 
-    <!-- Кнопка добавления видна только при праве ДобавлениеУчителя -->
     <button
       v-if="canAddTeacher"
       class="add-btn"
@@ -79,10 +78,36 @@
 
 <script>
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import axios from 'axios'
 import DataTable from '@/components/shared/DataTable.vue'
 import EditTeacherModal from '@/components/teachers/EditTeacherModal.vue'
 import AddTeacherModal from '@/components/teachers/AddTeacherModal.vue'
 import http from '@/api/http'
+
+const ZGU_USERNAME = 'Длявыгрузки'
+const ZGU_PASSWORD = '1'
+
+function encodeBasicAuthUtf8(username, password) {
+  const source = `${username}:${password}`
+
+  try {
+    const bytes = new TextEncoder().encode(source)
+    let binary = ''
+    for (const b of bytes) binary += String.fromCharCode(b)
+    return `Basic ${btoa(binary)}`
+  } catch {
+    return `Basic ${btoa(unescape(encodeURIComponent(source)))}`
+  }
+}
+
+const zguClient = axios.create({
+  baseURL: '/api',
+  timeout: 30000,
+  headers: {
+    Accept: 'application/json',
+    Authorization: encodeBasicAuthUtf8(ZGU_USERNAME, ZGU_PASSWORD)
+  }
+})
 
 function readRights() {
   try {
@@ -93,7 +118,6 @@ function readRights() {
   }
 }
 
-// читаем «филиал пользователя» из localStorage (поддерживаем разные ключи)
 function readUserFilial() {
   const direct = localStorage.getItem('filial')
     || localStorage.getItem('Филиал')
@@ -114,8 +138,28 @@ function readUserFilial() {
   return null
 }
 
+function normalizeString(v) {
+  return typeof v === 'string' ? v.trim() : ''
+}
+
 function normalizeBranchName(v) {
   return typeof v === 'string' ? v.trim() : ''
+}
+
+function normalizeComparableString(v) {
+  return normalizeString(v)
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ')
+}
+
+function simplifyBranchName(v) {
+  return normalizeBranchName(v)
+    .toLowerCase()
+    .replace(/^центр\s+/i, '')
+    .replace(/^филиал\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function uniqueBranches(arr = []) {
@@ -132,6 +176,199 @@ function uniqueBranches(arr = []) {
   return result
 }
 
+function extractTeachersArray(raw) {
+  if (Array.isArray(raw)) return raw
+
+  if (typeof raw === 'string') {
+    try {
+      return extractTeachersArray(JSON.parse(raw))
+    } catch {
+      return []
+    }
+  }
+
+  if (!raw || typeof raw !== 'object') return []
+
+  const candidates = [
+    raw.teachers,
+    raw.items,
+    raw.data,
+    raw.result,
+    raw.rows,
+    raw.Данные,
+    raw.Учителя
+  ]
+
+  for (const item of candidates) {
+    if (Array.isArray(item)) return item
+  }
+
+  return []
+}
+
+function normalizeDate(val) {
+  if (!val || val === '0001-01-01T00:00:00') return ''
+  if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10).split('-').reverse().join('.')
+  if (/^\d{2}\.\d{2}\.\d{4}/.test(val)) return val
+  try {
+    const d = new Date(val)
+    if (!isNaN(d)) return d.toLocaleDateString('ru-RU')
+  } catch (e) {
+    /* no-op */
+  }
+  return String(val)
+}
+
+function toDateStamp(val) {
+  if (!val || val === '0001-01-01T00:00:00') return 0
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(val)) {
+    const d = new Date(val.slice(0, 10))
+    return isNaN(d) ? 0 : d.getTime()
+  }
+
+  if (/^\d{2}\.\d{2}\.\d{4}$/.test(val)) {
+    const [dd, mm, yyyy] = val.split('.')
+    const d = new Date(`${yyyy}-${mm}-${dd}`)
+    return isNaN(d) ? 0 : d.getTime()
+  }
+
+  try {
+    const d = new Date(val)
+    return isNaN(d) ? 0 : d.getTime()
+  } catch {
+    return 0
+  }
+}
+
+function parseActive(raw) {
+  if (raw === true || raw === 1 || raw === '1') return true
+  if (raw === false || raw === 0 || raw === '0') return false
+
+  const s = String(raw ?? '').trim().toLowerCase()
+  if (!s) return false
+  if (['да', 'true', 'истина', 'активен', 'работает', 'on', 'yes', 'y'].includes(s)) return true
+  if (['нет', 'false', 'ложь', 'неактивен', 'уволен', 'off', 'no', 'n'].includes(s)) return false
+  return false
+}
+
+function extractTeacherNameParts(t) {
+  let surname = normalizeString(t?.Фамилия)
+  let name = normalizeString(t?.Имя)
+  let patronymic = normalizeString(t?.Отчество)
+
+  if ((!surname || !name) && t?.Наименование) {
+    const parts = String(t.Наименование).trim().split(/\s+/)
+    if (!surname) surname = parts[0] || ''
+    if (!name) name = parts[1] || ''
+    if (!patronymic) patronymic = parts.slice(2).join(' ')
+  }
+
+  return { surname, name, patronymic }
+}
+
+function buildTeacherFioKey(t) {
+  const { surname, name, patronymic } = extractTeacherNameParts(t)
+  if (!surname || !name) return ''
+  return [
+    normalizeComparableString(surname),
+    normalizeComparableString(name),
+    normalizeComparableString(patronymic)
+  ].join('|')
+}
+
+function resolveBranchByList(rawBranch, availableBranches = []) {
+  const raw = normalizeBranchName(rawBranch)
+  if (!raw) return ''
+
+  if (availableBranches.includes(raw)) return raw
+
+  const rawSimple = simplifyBranchName(raw)
+
+  for (const item of availableBranches) {
+    const simple = simplifyBranchName(item)
+    if (simple === rawSimple) return item
+  }
+
+  for (const item of availableBranches) {
+    const simple = simplifyBranchName(item)
+    if (simple && (rawSimple.includes(simple) || simple.includes(rawSimple))) {
+      return item
+    }
+  }
+
+  return raw
+}
+
+function buildZguIndex(items = [], availableBranches = []) {
+  const index = new Map()
+
+  for (const raw of items) {
+    const fioKey = buildTeacherFioKey(raw)
+    if (!fioKey) continue
+
+    const resolvedBranch = resolveBranchByList(raw?.Филиал, availableBranches)
+    const entry = {
+      Код: String(raw?.Код ?? ''),
+      Филиал: resolvedBranch || normalizeBranchName(raw?.Филиал),
+      _branchKey: simplifyBranchName(resolvedBranch || raw?.Филиал || ''),
+      _workActive: parseActive(raw?.Работа_Статус),
+      Дата_Увольнения: normalizeDate(raw?.Дата_Увольнения),
+      _dismissedStamp: toDateStamp(raw?.Дата_Увольнения)
+    }
+
+    const arr = index.get(fioKey) || []
+    arr.push(entry)
+    index.set(fioKey, arr)
+  }
+
+  return index
+}
+
+function annotateTeacherWithZgu(localTeacher, zguIndex) {
+  const noMismatch = {
+    ...localTeacher,
+    _zguDismissedMismatch: false,
+    _zguSyncLabel: ''
+  }
+
+  if (!localTeacher?._workActive) return noMismatch
+
+  const fioKey = buildTeacherFioKey(localTeacher)
+  if (!fioKey) return noMismatch
+
+  let candidates = zguIndex.get(fioKey) || []
+  if (!candidates.length) return noMismatch
+
+  const localBranchKey = simplifyBranchName(localTeacher.Филиал || '')
+  if (localBranchKey) {
+    const sameBranch = candidates.filter(c => c._branchKey && c._branchKey === localBranchKey)
+    if (sameBranch.length) {
+      candidates = sameBranch
+    }
+  }
+
+  const hasActiveZguRecord = candidates.some(c => c._workActive)
+  if (hasActiveZguRecord) return noMismatch
+
+  const dismissed = candidates
+    .filter(c => !c._workActive)
+    .sort((a, b) => (b._dismissedStamp || 0) - (a._dismissedStamp || 0))
+
+  if (!dismissed.length) return noMismatch
+
+  const latestDismissed = dismissed[0]
+  const dateSuffix = latestDismissed.Дата_Увольнения
+    ? ` (${latestDismissed.Дата_Увольнения})`
+    : ''
+
+  return {
+    ...localTeacher,
+    _zguDismissedMismatch: true,
+    _zguSyncLabel: `Уволен в ZGU${dateSuffix}, в локальной базе не отмечен`
+  }
+}
+
 export default {
   components: { DataTable, EditTeacherModal, AddTeacherModal },
   setup() {
@@ -146,12 +383,11 @@ export default {
       { key: 'Филиал', label: 'Филиал' }
     ]
     const firedColumn = { key: 'Дата_Увольнения', label: 'Дата увольнения' }
-    const showInactiveOnly = ref(false)
-    const displayedColumns = computed(() =>
-      showInactiveOnly.value ? [...baseColumns, firedColumn] : baseColumns
-    )
+    const zguSyncColumn = { key: '_zguSyncLabel', label: 'Сверка ZGU' }
 
+    const showInactiveOnly = ref(false)
     const teachers = ref([])
+    const zguIndex = ref(new Map())
     const loading = ref(true)
     const error = ref(null)
     const errorDetails = ref(null)
@@ -163,13 +399,30 @@ export default {
     const showEditModal = ref(false)
     const selectedTeacher = ref(null)
 
-    // === права / филиал пользователя ===
     const rights = ref(readRights())
     const userFilial = ref(normalizeBranchName(readUserFilial()))
 
     const canAddTeacher = computed(() => !!rights.value['ДобавлениеУчителя'])
     const canEditTeacher = computed(() => !!rights.value['РедактированиеУчителя'])
     const canEditOtherFilialData = computed(() => !!rights.value['РедактированиеДанныхЧужогоФилиала'])
+
+    const hasZguWarnings = computed(() =>
+      teachers.value.some(t => t._zguDismissedMismatch)
+    )
+
+    const displayedColumns = computed(() => {
+      const cols = [...baseColumns]
+
+      if (showInactiveOnly.value) {
+        cols.push(firedColumn)
+      }
+
+      if (hasZguWarnings.value) {
+        cols.push(zguSyncColumn)
+      }
+
+      return cols
+    })
 
     const refreshAuthContext = () => {
       rights.value = readRights()
@@ -266,7 +519,6 @@ export default {
         branchesList.value = ['Все', ...names]
         applyDefaultBranch()
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.debug('Не удалось получить MOL:', e && e.message)
 
         if (userFilial.value) {
@@ -276,6 +528,19 @@ export default {
           branchesList.value = ['Все']
           selectedBranch.value = 'Все'
         }
+      }
+    }
+
+    const fetchZguTeachers = async () => {
+      try {
+        const { data } = await zguClient.get('/ZGU/hs/teachers/GetPersData')
+        const arr = extractTeachersArray(data)
+        const availableBranches = branchesList.value.filter(b => b && b !== 'Все')
+
+        zguIndex.value = buildZguIndex(arr, availableBranches)
+      } catch (e) {
+        console.debug('Не удалось выполнить сверку с ZGU:', e && (e.message || e))
+        zguIndex.value = new Map()
       }
     }
 
@@ -289,23 +554,26 @@ export default {
         const { data: resp } = await http.get('/RCDO/hs/rcdo/teachers')
         const arr = resp && Array.isArray(resp.teachers) ? resp.teachers : []
 
-        teachers.value = arr.map(t => {
-          const start = normalizeDate(t.Дата_Приема_На_Работу)
-          const fired = normalizeDate(t.Дата_Увольнения)
-          const active = parseActive(t.Работа_Статус)
-          const branch = t.Филиал ? String(t.Филиал).trim() : 'Не указан'
+        teachers.value = arr
+          .map(t => {
+            const start = normalizeDate(t.Дата_Приема_На_Работу)
+            const fired = normalizeDate(t.Дата_Увольнения)
+            const active = parseActive(t.Работа_Статус)
+            const branch = t.Филиал ? String(t.Филиал).trim() : 'Не указан'
+            const { surname, name, patronymic } = extractTeacherNameParts(t)
 
-          return {
-            ...t,
-            Фамилия: t.Фамилия || (t.Наименование ? t.Наименование.split(' ')[0] : ''),
-            Имя: t.Имя || (t.Наименование ? t.Наименование.split(' ')[1] : ''),
-            Отчество: t.Отчество || (t.Наименование ? t.Наименование.split(' ')[2] : ''),
-            Дата_Приема_На_Работу: start,
-            Дата_Увольнения: fired,
-            _workActive: active,
-            Филиал: branch
-          }
-        })
+            return {
+              ...t,
+              Фамилия: t.Фамилия || surname,
+              Имя: t.Имя || name,
+              Отчество: t.Отчество || patronymic,
+              Дата_Приема_На_Работу: start,
+              Дата_Увольнения: fired,
+              _workActive: active,
+              Филиал: branch
+            }
+          })
+          .map(t => annotateTeacherWithZgu(t, zguIndex.value))
       } catch (err) {
         if (err.response) {
           error.value = `Ошибка сервера: ${err.response.status}`
@@ -325,6 +593,7 @@ export default {
     const fetchAll = async () => {
       loading.value = true
       await fetchFilialy()
+      await fetchZguTeachers()
       await fetchTeachers()
     }
 
@@ -343,10 +612,20 @@ export default {
         arr = arr.filter(t => t._workActive)
       }
 
-      return arr.map(t => ({
-        ...t,
-        rowClass: t._workActive ? '' : 'inactive-row'
-      }))
+      return arr.map(t => {
+        let rowClass = ''
+
+        if (t._zguDismissedMismatch) {
+          rowClass = 'zgu-dismissed-row'
+        } else if (!t._workActive) {
+          rowClass = 'inactive-row'
+        }
+
+        return {
+          ...t,
+          rowClass
+        }
+      })
     })
 
     const handleTeacherAdded = () => {
@@ -399,30 +678,6 @@ export default {
     }
   }
 }
-
-// === helpers ===
-function normalizeDate(val) {
-  if (!val || val === '0001-01-01T00:00:00') return ''
-  if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10).split('-').reverse().join('.')
-  if (/^\d{2}\.\d{2}\.\d{4}/.test(val)) return val
-  try {
-    const d = new Date(val)
-    if (!isNaN(d)) return d.toLocaleDateString('ru-RU')
-  } catch (e) {
-    /* no-op */
-  }
-  return String(val)
-}
-
-function parseActive(raw) {
-  if (raw === true || raw === 1 || raw === '1') return true
-  if (raw === false || raw === 0 || raw === '0') return false
-  const s = String(raw ?? '').trim().toLowerCase()
-  if (!s) return false
-  if (['да', 'true', 'истина', 'активен', 'работает', 'on', 'yes', 'y'].includes(s)) return true
-  if (['нет', 'false', 'ложь', 'неактивен', 'уволен', 'off', 'no', 'n'].includes(s)) return false
-  return false
-}
 </script>
 
 <style scoped>
@@ -441,7 +696,9 @@ function parseActive(raw) {
 .filter-container select{padding:5px 8px;border:1px solid #ced4da;border-radius:4px;min-width:200px}
 .ml-3{margin-left:16px}
 
-/* Подсветка неработающих, применяемая к строкам внутри DataTable */
 :deep(tr.inactive-row) { background:#f3f4f6; color:#6b7280; }
 :deep(tr.inactive-row td) { color:#6b7280 !important; }
+
+:deep(tr.zgu-dismissed-row) { background:#fff1f2; }
+:deep(tr.zgu-dismissed-row td) { color:#9f1239 !important; font-weight:500; }
 </style>

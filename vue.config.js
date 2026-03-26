@@ -1,37 +1,69 @@
 // vue.config.js
-const { Buffer } = require('buffer');
+const { Buffer } = require('buffer')
 
-const basic = 'Basic ' + Buffer
-  .from(`${process.env.VUE_APP_1C_USER}:${process.env.VUE_APP_1C_PASS}`, 'utf8')
-  .toString('base64');
+function makeBasic(user, pass) {
+  return 'Basic ' + Buffer.from(`${user}:${pass}`, 'utf8').toString('base64')
+}
+
+const rcdoBasic = makeBasic(
+  process.env.VUE_APP_1C_RCDO_USER,
+  process.env.VUE_APP_1C_RCDO_PASS
+)
+
+const zguBasic = makeBasic(
+  process.env.VUE_APP_1C_ZGU_USER,
+  process.env.VUE_APP_1C_ZGU_PASS
+)
 
 module.exports = {
   devServer: {
     port: 8081,
     proxy: {
-      '^/api': {
+      '^/api/RCDO': {
         target: 'http://192.168.88.102',
-        //target: 'http://136.169.171.150',
         changeOrigin: true,
         logLevel: 'debug',
         proxyTimeout: 30000,
         preserveHeaderKeyCase: true,
         xfwd: true,
+        pathRewrite: {
+          '^/api/RCDO': '/RCDO'
+        },
         onProxyReq(proxyReq) {
-          // 1С примет только Basic — ставим безусловно
-          proxyReq.setHeader('Authorization', basic);
-          proxyReq.setHeader('Proxy-Authorization', basic);
-          // ничего с фронта не тянем
-          proxyReq.removeHeader('Cookie');
-          proxyReq.removeHeader('Origin');
+          proxyReq.setHeader('Authorization', rcdoBasic)
+          proxyReq.setHeader('Proxy-Authorization', rcdoBasic)
+          proxyReq.removeHeader('Cookie')
+          proxyReq.removeHeader('Origin')
         },
         onProxyRes(proxyRes) {
-          // чтобы браузер не выкидывал Basic-попап
           if (proxyRes.headers && proxyRes.headers['www-authenticate']) {
-            delete proxyRes.headers['www-authenticate'];
+            delete proxyRes.headers['www-authenticate']
+          }
+        }
+      },
+
+      '^/api/ZGU': {
+        target: 'http://192.168.88.102',
+        changeOrigin: true,
+        logLevel: 'debug',
+        proxyTimeout: 30000,
+        preserveHeaderKeyCase: true,
+        xfwd: true,
+        pathRewrite: {
+          '^/api/ZGU': '/ZGU'
+        },
+        onProxyReq(proxyReq) {
+          proxyReq.setHeader('Authorization', zguBasic)
+          proxyReq.setHeader('Proxy-Authorization', zguBasic)
+          proxyReq.removeHeader('Cookie')
+          proxyReq.removeHeader('Origin')
+        },
+        onProxyRes(proxyRes) {
+          if (proxyRes.headers && proxyRes.headers['www-authenticate']) {
+            delete proxyRes.headers['www-authenticate']
           }
         }
       }
     }
   }
-};
+}
